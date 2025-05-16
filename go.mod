@@ -1,4 +1,4 @@
-module http-tunnels
+module github.com/kaenova/http-tunnels
 
 go 1.23.4
 
