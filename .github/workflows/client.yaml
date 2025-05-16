@@ -15,7 +15,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [windows, macos]
+        os: [windows, darwin]
         arch: [amd64, arm64]
         exclude:
           - os: windows
@@ -67,13 +67,13 @@ jobs:
         with:
           artifacts: |
             dist/main-windows-amd64
-            dist/main-macos-amd64
-            dist/main-macos-arm64
+            dist/main-darwin-amd64
+            dist/main-darwin-arm64
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           body: |
             Automated release of Go binaries for:
             - Windows 64-bit
-            - macOS ARM
-            - macOS Intel
+            - macOS (Darwin) ARM
+            - macOS (Darwin) Intel
