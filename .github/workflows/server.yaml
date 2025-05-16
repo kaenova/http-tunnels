@@ -21,7 +21,7 @@ jobs:
         run: echo ${{ secrets.DOCKER_PASSWORD }} | docker login $DOCKER_REGISTRY --username ${{ secrets.DOCKER_USER }} --password-stdin
 
       - name: Build Docker Image
-        run: docker build --tag "$DOCKER_REGISTRY/$DOCKER_REPOSITORY:$TAGS" --tag "$DOCKER_REGISTRY/$DOCKER_REPOSITORY:latest" -f Dockerfile .
+        run: docker build --tag "$DOCKER_REPOSITORY:$TAGS" --tag "$DOCKER_REPOSITORY:latest" -f Dockerfile .
 
       - name: Dockerhub Push
-        run: docker push "$DOCKER_REGISTRY/$DOCKER_REPOSITORY" --all-tags
+        run: docker push "$DOCKER_REPOSITORY" --all-tags
