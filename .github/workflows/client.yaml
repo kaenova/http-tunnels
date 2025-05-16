@@ -27,16 +27,16 @@ jobs:
         run: mkdir -p dist
 
       - name: Build Darwin AMD64
-        run: GOOS=darwin GOARCH=amd64 go build -o dist/client-darwin-amd64 ./client/main.go
+        run: GOOS=darwin GOARCH=amd64 go build -o dist/client-darwin-amd64
 
       - name: Build Darwin ARM64
-        run: GOOS=darwin GOARCH=arm64 go build -o dist/client-darwin-arm64 ./client/main.go
+        run: GOOS=darwin GOARCH=arm64 go build -o dist/client-darwin-arm64
 
       - name: Build Windows AMD64
-        run: GOOS=windows GOARCH=amd64 go build -o dist/client-windows-amd64.exe ./client/main.go
+        run: GOOS=windows GOARCH=amd64 go build -o dist/client-windows-amd64.exe
 
       - name: Build Windows ARM64
-        run: GOOS=windows GOARCH=arm64 go build -o dist/client-windows-arm64.exe ./client/main.go
+        run: GOOS=windows GOARCH=arm64 go build -o dist/client-windows-arm64.exe
 
       - name: Compress binaries
         run: |

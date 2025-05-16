@@ -79,7 +79,10 @@ This repository provides an HTTP tunnel server and client implementation. The se
 
 ### Download the Client Binary
 
-1. Go to the [Releases Page](https://github.com/kaenova/http-tunnels/releases).
+1. Go to the [Releases Page](https://github.com/kaenova/http-tunnels/releases). Or install by using `go install`:
+  ```bash
+  go install github.com/kaenova/http-tunnels/tunnel-client@latest
+  ```
 2. Download the appropriate binary for your platform (e.g., Windows, macOS, Linux).
 
 ### Run the Client
