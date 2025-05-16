@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths:
+      - Dockerfile
+      - .github/workflows/server.yaml
+      - server/**
 env:
   TAGS: ${{ github.sha }}
 
