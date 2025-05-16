@@ -62,7 +62,25 @@ func main() {
 	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status": "ok"}`))
+
+		// Get All Tunnel
+		tm.mu.RLock()
+		tunnels := make([]string, 0, len(tm.tunnels))
+		for domain := range tm.tunnels {
+			tunnels = append(tunnels, domain)
+		}
+		tm.mu.RUnlock()
+
+		data := map[string]interface{}{
+			"ping":    "pong",
+			"tunnels": tunnels,
+		}
+		response, err := json.Marshal(data)
+		if err != nil {
+			http.Error(w, "Error marshalling response", http.StatusInternalServerError)
+			return
+		}
+		w.Write(response)
 	})
 
 	// Handle new tunnel requests
@@ -104,7 +122,7 @@ func main() {
 		tunnel := &Tunnel{
 			Domain:          domain,
 			Conn:            nil,
-			Outgoing:        make(chan []byte, 10000),
+			Outgoing:        nil,
 			PendingRequests: sync.Map{},
 		}
 
@@ -164,15 +182,17 @@ func main() {
 		})
 		defer conn.Close()
 
-		log.Printf("New tunnel created: %s", reqDomain)
+		// Create New Tunnel
 		tunnel := &Tunnel{
 			Domain:   reqDomain,
 			Conn:     conn,
-			Outgoing: make(chan []byte, 100),
+			Outgoing: make(chan []byte, 10000),
 		}
 		tm.tunnels[reqDomain] = tunnel
 		tm.mu.Unlock()
 
+		// Listen to the tunnel
+		log.Printf("New tunnel created: %s", reqDomain)
 		go tunnel.writer()
 		tunnel.reader(tm)
 	})
