@@ -49,11 +49,15 @@ jobs:
         id: get-date
         run: echo "RELEASE_NAME=$(date '+%Y%m%d %H%M%S')" >> $GITHUB_OUTPUT
 
+      - name: Get tag name
+        id: get-tag
+        run: echo "TAG_NAME=$(date '+%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           name: ${{ steps.get-date.outputs.RELEASE_NAME }}
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.get-tag.outputs.TAG_NAME }}
           files: |
             dist/client-darwin-amd64.tar.gz
             dist/client-darwin-arm64.tar.gz
