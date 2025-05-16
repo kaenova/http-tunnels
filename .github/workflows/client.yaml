@@ -72,7 +72,7 @@ jobs:
             dist/main-darwin-arm64
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
+          name: Release ${{ github.event.repository.updated_at }}
           body: |
             Automated release of Go binaries for:
             - Windows 64-bit

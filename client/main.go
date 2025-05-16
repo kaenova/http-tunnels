@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -88,6 +89,13 @@ func GetAppConfig() *AppConfig {
 	// Flags for tunnel host and scheme
 	hostFlag := flag.String("host", tunnelHost, "Public Tunnel host address (ex. http://tunnel.example.com) or use TUNNEL_HOST env var")
 
+	flag.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Tunnel Client - A simple HTTP tunnel client")
+		fmt.Fprintln(os.Stderr, "Github : https://github.com/kaenova/http-tunnels")
+		fmt.Fprintln(os.Stderr, "Usage: tunnel-client [options] <destination_server>")
+		fmt.Fprintln(os.Stderr, "Options:")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	destinationServer := flag.Arg(0)
