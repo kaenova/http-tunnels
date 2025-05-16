@@ -127,9 +127,9 @@ func GetAppConfig() *AppConfig {
 		log.Fatal("Invalid destination server URL (ex. http(s)://destination.domain.com or http(s)://localhost) :", destinationServer)
 	}
 
-	subdomain := *subdomainFlag
-	if subdomain != "" {
-		subdomain = ""
+	subdomain := ""
+	if subdomainFlag != nil && *subdomainFlag != "" {
+		subdomain = *subdomainFlag
 	}
 
 	return &AppConfig{

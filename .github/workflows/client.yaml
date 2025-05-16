@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'client/main.go'
+      - './http_tunnels.go'
   workflow_dispatch:
 
 jobs:
