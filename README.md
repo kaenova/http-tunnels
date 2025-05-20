@@ -88,7 +88,7 @@ This repository provides an HTTP tunnel server and client implementation. The se
 ### Run the Client
 
 ```bash
-./tunnel-client -host http://<your-domain> <destination_server>
+http-tunnels -host http://<your-domain> <destination_server>
 ```
 Replace `<your-tunnel-domain>` with your server's domain (e.g., `example.com`) and `<destination_server>` with the URL of the server you want to forward requests to (e.g., `http://localhost:8080`).
 
@@ -100,12 +100,12 @@ Replace `<your-tunnel-domain>` with your server's domain (e.g., `example.com`) a
 
 1. Run the client with a custom subdomain:
    ```bash
-   ./tunnel-client -host http://<your-domain> -subdomain mysubdomain <destination_server>
+   http-tunnels -host http://<your-domain> -subdomain mysubdomain <destination_server>
    ```
 
    It will run and connect to the server like this:
     ```bash
-    ./tunnel-client -host http://localhost:80 -subdomain kaenova http://localhost:5500
+    http-tunnels -host http://localhost:80 -subdomain kaenova http://localhost:5500
     2025/05/16 16:18:09 Tunnel created with domain: fpwzd9fv_pe.localhost:80
     2025/05/16 16:18:09 Domain key: YClFmsr6BosKxaH92tV6UQ
     2025/05/16 16:18:09 Connected to tunnel server
