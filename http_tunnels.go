@@ -216,7 +216,11 @@ func handleRequest(config *AppConfig, wsM *WebsocketManager, req RequestMessage)
 			httpReq.Header.Add(k, v)
 		}
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		// Prevent redirect requests,
+		// Redirect response will be handled by the client
+		return http.ErrUseLastResponse
+	}}
 	resp, err := client.Do(httpReq)
 
 	if err != nil {
