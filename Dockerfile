@@ -20,7 +20,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go application
-RUN go build -o main cmd/server/main.go
+RUN go build -o main -ldflags "-s -w" cmd/server/main.go
 
 # Stage 2: Create a lightweight runtime image
 FROM alpine:latest
