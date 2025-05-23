@@ -82,6 +82,9 @@ func (wm *WebsocketManager) SendMessage(msg ResponseMessage) error {
 func GetAppConfig() *AppConfig {
 	// Read environment variable for tunnel host
 	tunnelHost := os.Getenv("TUNNEL_HOST")
+	if tunnelHost == "" {
+		tunnelHost = "https://t.kaenova.my.id"
+	}
 
 	// Flags for subdomain
 	subdomainFlag := flag.String("subdomain", "", "Subdomain to use for the tunnel")
@@ -120,7 +123,7 @@ func GetAppConfig() *AppConfig {
 		log.Fatal("Invalid tunnel host URL:", err)
 	}
 	if (tunnelURL.Scheme != "http" && tunnelURL.Scheme != "https") || tunnelURL.Host == "" {
-		log.Fatal("Invalid tunnel host URL (ex. http(s)://tunner.domain.com) :", *hostFlag)
+		log.Fatal("Invalid tunnel host URL (ex. http(s)://tunnel.domain.com) :", *hostFlag)
 	}
 
 	if destinationUrl.Scheme != "http" && destinationUrl.Scheme != "https" {

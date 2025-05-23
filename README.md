@@ -1,6 +1,8 @@
 # HTTP Tunnel Server and Client
 
-This repository provides an HTTP tunnel server and client implementation. The server allows users to create tunnels for forwarding HTTP requests to a destination server. The client connects to the server and forwards requests to the desired destination.
+This repository provides an HTTP tunnel server and client implementation. The server allows users to create tunnels for forwarding HTTP requests to a destination server. The client connects to the server and forwards requests to the desired destination. But you can install the client only and use the server hosted by me for free.
+
+If you want to support the service, consider donating to my [Trakteer](https://trakteer.id/kaenova/tip).
 
 ---
 
@@ -17,6 +19,37 @@ This repository provides an HTTP tunnel server and client implementation. The se
 - A domain name (e.g., `example.com`) and a wildcard subdomain (e.g., `*.example.com`) pointing to the server hosting this tunneling service.
 - Go 1.23+ installed on your machine (if building the server manually).
 - Alternatively, use the prebuilt Docker image for hosting the server.
+
+---
+
+## Using the Tunnel Client
+
+### Download the Client Binary
+
+1. Go to the [Releases Page](https://github.com/kaenova/http-tunnels/releases). Or install by using `go install`:
+  ```bash
+  go install github.com/kaenova/http-tunnels@latest
+  ```
+2. Download the appropriate binary for your platform (e.g., Windows, macOS, Linux).
+
+### Run the Client
+
+By default the host is connected to my server. You can use it for free! If you want to support the servies, consider dontating to my [Trakteer](https://trakteer.id/kaenova/tip).
+
+```bash
+http-tunnels <destination_server>
+```
+
+or using your own server
+
+```bash
+http-tunnels -host http://<your-domain> <destination_server>
+```
+
+You can Replace `<your-tunnel-domain>` with your server's domain (e.g., `example.com`) and `<destination_server>` with the URL of the server you want to forward requests to (e.g., `http://localhost:8080`).
+
+
+
 
 ---
 
@@ -75,25 +108,6 @@ This repository provides an HTTP tunnel server and client implementation. The se
 
 ---
 
-## Using the Tunnel Client
-
-### Download the Client Binary
-
-1. Go to the [Releases Page](https://github.com/kaenova/http-tunnels/releases). Or install by using `go install`:
-  ```bash
-  go install github.com/kaenova/http-tunnels@latest
-  ```
-2. Download the appropriate binary for your platform (e.g., Windows, macOS, Linux).
-
-### Run the Client
-
-```bash
-http-tunnels -host http://<your-domain> <destination_server>
-```
-Replace `<your-tunnel-domain>` with your server's domain (e.g., `example.com`) and `<destination_server>` with the URL of the server you want to forward requests to (e.g., `http://localhost:8080`).
-
----
-
 ## Example Usage
 
 ### Create a Tunnel with a Custom Subdomain
@@ -113,45 +127,6 @@ Replace `<your-tunnel-domain>` with your server's domain (e.g., `example.com`) a
 
 2. Access the tunnel:
    - Open your browser and navigate to `http://fpwzd9fv_pe.localhost`.
-
----
-
-## API Endpoints
-
-### Server Endpoints
-
-1. **Ping Endpoint**:
-   - URL: `/ping`
-   - Method: `GET`
-   - Response:
-     ```json
-     {
-       "ping": "pong",
-       "tunnels": ["subdomain1", "subdomain2"]
-     }
-     ```
-
-2. **Create New Tunnel**:
-   - URL: `/new_tunnel`
-   - Method: `POST`
-   - Query Parameters:
-     - `subdomain` (optional): Custom subdomain.
-   - Response:
-     ```json
-     {
-       "domain": "assigned-subdomain",
-       "domain_key": "generated-domain-key"
-     }
-     ```
-
-3. **Tunnel WebSocket**:
-   - URL: `/tunnel`
-   - Method: `GET`
-   - Query Parameters:
-     - `domain`: The domain of the tunnel.
-     - `domain_key`: The domain key for validation.
-
----
 
 ## Notes
 

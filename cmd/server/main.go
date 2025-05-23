@@ -68,16 +68,16 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 
 		// Get All Tunnel
-		tm.mu.RLock()
-		tunnels := make([]string, 0, len(tm.tunnels))
-		for domain := range tm.tunnels {
-			tunnels = append(tunnels, domain)
-		}
-		tm.mu.RUnlock()
+		// tm.mu.RLock()
+		// tunnels := make([]string, 0, len(tm.tunnels))
+		// for domain := range tm.tunnels {
+		// 	tunnels = append(tunnels, domain)
+		// }
+		// tm.mu.RUnlock()
 
 		data := map[string]interface{}{
-			"ping":    "pong",
-			"tunnels": tunnels,
+			"ping": "pong",
+			// "tunnels": tunnels,
 		}
 		response, err := json.Marshal(data)
 		if err != nil {
