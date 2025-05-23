@@ -158,8 +158,9 @@ func RequestNewTunnel(config *AppConfig) TunnelConfig {
 
 	// Read the response
 	var tunnelResp struct {
-		Domain    string `json:"domain"`
-		DomainKey string `json:"domain_key"`
+		Domain        string  `json:"domain"`
+		DomainKey     string  `json:"domain_key"`
+		ServerMessage *string `json:"server_message"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tunnelResp); err != nil {
 		log.Fatal("Decoding tunnel response error:", err)
@@ -167,6 +168,10 @@ func RequestNewTunnel(config *AppConfig) TunnelConfig {
 
 	log.Printf("Tunnel created with domain: %s", tunnelResp.Domain)
 	log.Printf("Domain key: %s", tunnelResp.DomainKey)
+
+	if tunnelResp.ServerMessage != nil {
+		log.Printf("Server message: %s", *tunnelResp.ServerMessage)
+	}
 
 	return TunnelConfig{
 		Domain:    tunnelResp.Domain,

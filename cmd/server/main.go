@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,9 @@ type ResponseMessage struct {
 }
 
 func main() {
+	// Get Server Message by Environment Variable
+	serverMessage := os.Getenv("SERVER_MESSAGE")
+
 	tm := &TunnelManager{
 		tunnels: make(map[string]*Tunnel),
 	}
@@ -138,7 +142,15 @@ func main() {
 		// Send the domain back to the client
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		response := map[string]string{"domain": domain, "domain_key": domainKey}
+		response := map[string]string{
+			"domain":     domain,
+			"domain_key": domainKey,
+		}
+
+		if serverMessage != "" {
+			response["server_message"] = serverMessage
+		}
+
 		responseBytes, _ := json.Marshal(response)
 		w.Write(responseBytes)
 		log.Printf("New domain registered: %s", domain)
