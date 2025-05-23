@@ -1,19 +1,17 @@
 name: Build and Release Go Binary
 
 on:
+  # Triggers the workflow on push events but only for tags matching v*.*.*
   push:
-    branches:
-      - main
-    paths:
-      - './http_tunnels.go'
-  workflow_dispatch:
+    tags:
+      - 'v*.*.*'
 
 jobs:
   build:
-    name: Build
+    name: Build and Release
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Required to create a release
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -27,41 +25,37 @@ jobs:
         run: mkdir -p dist
 
       - name: Build Darwin AMD64
-        run: GOOS=darwin GOARCH=amd64 go build -o dist/client-darwin-amd64
+        run: GOOS=darwin GOARCH=amd64 go build -o dist/http-tunnels-darwin-amd64 ./http_tunnels.go
 
       - name: Build Darwin ARM64
-        run: GOOS=darwin GOARCH=arm64 go build -o dist/client-darwin-arm64
+        run: GOOS=darwin GOARCH=arm64 go build -o dist/http-tunnels-darwin-arm64 ./http_tunnels.go
 
       - name: Build Windows AMD64
-        run: GOOS=windows GOARCH=amd64 go build -o dist/client-windows-amd64.exe
+        run: GOOS=windows GOARCH=amd64 go build -o dist/http-tunnels-windows-amd64.exe ./http_tunnels.go
 
       - name: Build Windows ARM64
-        run: GOOS=windows GOARCH=arm64 go build -o dist/client-windows-arm64.exe
+        run: GOOS=windows GOARCH=arm64 go build -o dist/http-tunnels-windows-arm64.exe ./http_tunnels.go
 
       - name: Compress binaries
         run: |
-          tar -czvf dist/client-darwin-amd64.tar.gz -C dist client-darwin-amd64
-          tar -czvf dist/client-darwin-arm64.tar.gz -C dist client-darwin-arm64
-          zip -j dist/client-windows-amd64.zip dist/client-windows-amd64.exe
-          zip -j dist/client-windows-arm64.zip dist/client-windows-arm64.exe
-
-      - name: Get release name
-        id: get-date
-        run: echo "RELEASE_NAME=$(date '+%Y%m%d %H%M%S')" >> $GITHUB_OUTPUT
-
-      - name: Get tag name
-        id: get-tag
-        run: echo "TAG_NAME=$(date '+%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+          tar -czvf dist/http-tunnels-darwin-amd64.tar.gz -C dist http-tunnels-darwin-amd64
+          tar -czvf dist/http-tunnels-darwin-arm64.tar.gz -C dist http-tunnels-darwin-arm64
+          zip -j dist/http-tunnels-windows-amd64.zip dist/http-tunnels-windows-amd64.exe
+          zip -j dist/http-tunnels-windows-arm64.zip dist/http-tunnels-windows-arm64.exe
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: ${{ steps.get-date.outputs.RELEASE_NAME }}
-          tag_name: ${{ steps.get-tag.outputs.TAG_NAME }}
+          # Sets the release name to the tag name (e.g., "v1.0.0")
+          name: ${{ github.ref_name }}
+          # Sets the tag for the release to the tag that triggered the workflow
+          tag_name: ${{ github.ref_name }}
+          # Attaches the compressed binaries as release assets
           files: |
-            dist/client-darwin-amd64.tar.gz
-            dist/client-darwin-arm64.tar.gz
-            dist/client-windows-amd64.zip
-            dist/client-windows-arm64.zip
+            dist/http-tunnels-darwin-amd64.tar.gz
+            dist/http-tunnels-darwin-arm64.tar.gz
+            dist/http-tunnels-windows-amd64.zip
+            dist/http-tunnels-windows-arm64.zip
         env:
+          # The GITHUB_TOKEN is automatically provided by GitHub
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
