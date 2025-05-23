@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTP Tunnels - Expose Local Servers Easily</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide-react@latest/dist/lucide-react.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            scroll-behavior: smooth;
+        }
+        .tab-active {
+            border-color: #3b82f6; /* blue-500 */
+            color: #3b82f6;
+            font-weight: 600;
+        }
+        .tab-inactive {
+            border-color: transparent;
+            color: #6b7280; /* gray-500 */
+        }
+        .code-block {
+            background-color: #1f2937; /* gray-800 */
+            color: #e5e7eb; /* gray-200 */
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            position: relative;
+        }
+        .code-block pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .copy-button {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background-color: #374151; /* gray-700 */
+            color: #e5e7eb; /* gray-200 */
+            border: none;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .copy-button:hover {
+            background-color: #4b5563; /* gray-600 */
+        }
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 100px;
+            background-color: #374151;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px 0;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -50px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+
+    <nav class="bg-white/80 backdrop-blur-md shadow-sm fixed w-full z-50 top-0">
+        <div class="container mx-auto px-6 py-3 flex justify-between items-center">
+            <a href="#" class="text-2xl font-bold text-blue-600 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 lucide lucide-arrow-right-left"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>
+                HTTP Tunnels
+            </a>
+            <div class="flex items-center space-x-4">
+                <a href="#features" class="text-slate-600 hover:text-blue-600 transition-colors">Features</a>
+                <a href="#install" class="text-slate-600 hover:text-blue-600 transition-colors">Install</a>
+                <a href="#usage" class="text-slate-600 hover:text-blue-600 transition-colors">Usage</a>
+                <a href="https://github.com/kaenova/http-tunnels" target="_blank" rel="noopener noreferrer" class="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-700 transition-colors flex items-center text-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 lucide lucide-github"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35.0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35.0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+                    View on GitHub
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <header class="bg-gradient-to-br from-blue-600 to-indigo-700 text-white pt-32 pb-20">
+        <div class="container mx-auto px-6 text-center">
+            <h1 class="text-5xl md:text-6xl font-bold mb-6 leading-tight">
+                Effortlessly Expose Local Servers
+            </h1>
+            <p class="text-xl md:text-2xl mb-10 max-w-3xl mx-auto text-indigo-100">
+                HTTP Tunnels provides a secure and easy way to share your local development servers or access internal services from anywhere.
+                <span class="block mt-2 font-semibold">Use our free hosted server or deploy your own!</span>
+            </p>
+            <div class="space-x-4">
+                <a href="#install" class="bg-white text-blue-600 font-semibold px-8 py-3 rounded-lg shadow-md hover:bg-blue-50 transition-colors text-lg">
+                    Get Started
+                </a>
+                <a href="https://trakteer.id/kaenova/tip" target="_blank" rel="noopener noreferrer" class="bg-pink-500 text-white font-semibold px-8 py-3 rounded-lg shadow-md hover:bg-pink-600 transition-colors text-lg flex items-center justify-center sm:inline-flex mt-4 sm:mt-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 lucide lucide-heart"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+                    Support the Service
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <section id="features" class="py-16 bg-white">
+        <div class="container mx-auto px-6">
+            <h2 class="text-3xl font-bold text-center mb-12 text-slate-800">Why HTTP Tunnels?</h2>
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="bg-slate-100 p-6 rounded-lg shadow-sm">
+                    <div class="flex items-center justify-center w-12 h-12 bg-blue-500 text-white rounded-full mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-zap"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Easy to Use</h3>
+                    <p class="text-slate-600">Simple commands to install and run. Get your local server online in seconds.</p>
+                </div>
+                <div class="bg-slate-100 p-6 rounded-lg shadow-sm">
+                    <div class="flex items-center justify-center w-12 h-12 bg-blue-500 text-white rounded-full mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shield-check"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Secure & Reliable</h3>
+                    <p class="text-slate-600">WebSocket-based communication and domain key validation for secure tunnel access.</p>
+                </div>
+                <div class="bg-slate-100 p-6 rounded-lg shadow-sm">
+                    <div class="flex items-center justify-center w-12 h-12 bg-blue-500 text-white rounded-full mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-globe"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Custom Subdomains</h3>
+                    <p class="text-slate-600">Use custom or random subdomains. Perfect for demos and testing webhooks.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="install" class="py-16 bg-slate-50">
+        <div class="container mx-auto px-6">
+            <h2 class="text-3xl font-bold text-center mb-2 text-slate-800">Install the Tunnel Client</h2>
+            <p class="text-center text-slate-600 mb-10 max-w-xl mx-auto">
+                Choose your preferred method to install the HTTP Tunnels client. It's quick and easy!
+            </p>
+
+            <div class="max-w-2xl mx-auto bg-white p-6 sm:p-8 rounded-xl shadow-xl">
+                <div class="mb-6 border-b border-slate-200">
+                    <nav class="-mb-px flex space-x-1 sm:space-x-4 overflow-scroll" aria-label="Tabs">
+                        <button onclick="showTab('brew')" id="tab-brew" class="tab-button tab-active whitespace-nowrap py-3 px-2 sm:px-4 border-b-2 font-medium text-sm sm:text-base">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1 lucide lucide-beer"><path d="M17 11h1a3 3 0 0 1 0 6h-1"/><path d="M9 12v6"/><path d="M13 12v6"/><path d="M14 7.5c0-.8-.5-1.5-1.2-1.5H8.2c-.7 0-1.2.7-1.2 1.5V12h7V7.5Z"/><path d="M12 6V5a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v1"/><path d="M7 12h10v6a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2Z"/></svg>
+                            Brew (macOS/Linux)
+                        </button>
+                        <button onclick="showTab('winget')" id="tab-winget" class="tab-button tab-inactive whitespace-nowrap py-3 px-2 sm:px-4 border-b-2 font-medium text-sm sm:text-base">
+                           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1 lucide lucide-laptop"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55A1 1 0 0 1 20.28 20H3.72a1 1 0 0 1-.98-1.45L4 16"/></svg>
+                            Winget (Windows)
+                        </button>
+                        <button onclick="showTab('go')" id="tab-go" class="tab-button tab-inactive whitespace-nowrap py-3 px-2 sm:px-4 border-b-2 font-medium text-sm sm:text-base">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1 lucide lucide-braces"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></svg>
+                            Go Install
+                        </button>
+                         <button onclick="showTab('binary')" id="tab-binary" class="tab-button tab-inactive whitespace-nowrap py-3 px-2 sm:px-4 border-b-2 font-medium text-sm sm:text-base">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1 lucide lucide-download"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                            Binary
+                        </button>
+                    </nav>
+                </div>
+
+                <div id="content-brew" class="tab-content">
+                    <p class="text-slate-600 mb-3">For macOS and Linux users with Homebrew installed:</p>
+                    <div class="code-block">
+                        <pre id="code-brew">brew install kaenova/tunnel/http-tunnels</pre>
+                        <button class="copy-button tooltip" onclick="copyToClipboard('code-brew', 'tooltip-brew')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                            <span class="tooltiptext" id="tooltip-brew">Copy</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="content-winget" class="tab-content hidden">
+                    <p class="text-slate-600 mb-3">For Windows users with Winget package manager:</p>
+                    <div class="code-block">
+                        <pre id="code-winget">winget install kaenova.http-tunnels</pre>
+                        <button class="copy-button tooltip" onclick="copyToClipboard('code-winget', 'tooltip-winget')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                            <span class="tooltiptext" id="tooltip-winget">Copy</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="content-go" class="tab-content hidden">
+                    <p class="text-slate-600 mb-3">If you have Go (1.23+) installed:</p>
+                    <div class="code-block">
+                        <pre id="code-go">go install github.com/kaenova/http-tunnels@latest</pre>
+                         <button class="copy-button tooltip" onclick="copyToClipboard('code-go', 'tooltip-go')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                            <span class="tooltiptext" id="tooltip-go">Copy</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="content-binary" class="tab-content hidden">
+                    <p class="text-slate-600 mb-3">Download the precompiled binary for your platform:</p>
+                    <a href="https://github.com/kaenova/http-tunnels/releases" target="_blank" rel="noopener noreferrer" class="inline-flex items-center bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 lucide lucide-download-cloud"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m8 17 4 4 4-4"/></svg>
+                        Go to Releases Page
+                    </a>
+                    <p class="text-slate-600 mt-3 text-sm">Make sure to give the downloaded binary execute permissions (e.g., <code class="bg-slate-200 px-1 rounded">chmod +x http-tunnels</code>).</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="usage" class="py-16 bg-white">
+        <div class="container mx-auto px-6">
+            <h2 class="text-3xl font-bold text-center mb-12 text-slate-800">How to Use</h2>
+            <div class="grid md:grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+                <div class="bg-slate-100 p-6 rounded-lg shadow-sm">
+                    <h3 class="text-xl font-semibold mb-3 flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 text-blue-500 lucide lucide-play-circle"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                        Run the Client (Free Hosted Server)
+                    </h3>
+                    <p class="text-slate-600 mb-4">
+                        By default, the client connects to our free hosted server. Simply provide your destination server URL (e.g., your local development server).
+                    </p>
+                    <div class="code-block">
+                        <pre id="code-run-default">http-tunnels http://localhost:8080</pre>
+                        <button class="copy-button tooltip" onclick="copyToClipboard('code-run-default', 'tooltip-run-default')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                            <span class="tooltiptext" id="tooltip-run-default">Copy</span>
+                        </button>
+                    </div>
+                    <p class="text-slate-600 mt-3 text-sm">Replace <code class="bg-slate-200 px-1 rounded">http://localhost:8080</code> with your actual destination server.</p>
+                </div>
+
+                <div class="bg-slate-100 p-6 rounded-lg shadow-sm">
+                    <h3 class="text-xl font-semibold mb-3 flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 text-blue-500 lucide lucide-server"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+                        Run with Your Own Server
+                    </h3>
+                    <p class="text-slate-600 mb-4">If you're hosting your own tunnel server:</p>
+                    <div class="code-block">
+                        <pre id="code-run-custom">http-tunnels -host http://your-tunnel-domain.com http://localhost:3000</pre>
+                         <button class="copy-button tooltip" onclick="copyToClipboard('code-run-custom', 'tooltip-run-custom')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                            <span class="tooltiptext" id="tooltip-run-custom">Copy</span>
+                        </button>
+                    </div>
+                     <p class="text-slate-600 mt-3 text-sm">Replace <code class="bg-slate-200 px-1 rounded">your-tunnel-domain.com</code> and <code class="bg-slate-200 px-1 rounded">http://localhost:3000</code> accordingly.</p>
+                </div>
+
+                <div class="bg-slate-100 p-6 rounded-lg shadow-sm lg:col-span-2">
+                    <h3 class="text-xl font-semibold mb-3 flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 text-blue-500 lucide lucide-link"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        Example: Custom Subdomain
+                    </h3>
+                    <p class="text-slate-600 mb-4">Create a tunnel with a specific subdomain:</p>
+                    <div class="code-block">
+                        <pre id="code-run-subdomain">http-tunnels -host http://your-tunnel-domain.com -subdomain mysubdomain http://localhost:5500</pre>
+                        <button class="copy-button tooltip" onclick="copyToClipboard('code-run-subdomain', 'tooltip-run-subdomain')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                            <span class="tooltiptext" id="tooltip-run-subdomain">Copy</span>
+                        </button>
+                    </div>
+                    <p class="text-slate-600 mt-4">The client will output the tunnel URL and domain key:</p>
+                    <div class="code-block mt-2">
+                        <pre>
+2025/05/16 16:18:09 Tunnel created with domain: mysubdomain.your-tunnel-domain.com
+2025/05/16 16:18:09 Domain key: YClFmsr6BosKxaH92tV6UQ
+2025/05/16 16:18:09 Connected to tunnel server</pre>
+                    </div>
+                    <p class="text-slate-600 mt-3 text-sm">You can then access your service at <code class="bg-slate-200 px-1 rounded">http://mysubdomain.your-tunnel-domain.com</code>.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="hosting" class="py-16 bg-slate-50">
+        <div class="container mx-auto px-6">
+            <h2 class="text-3xl font-bold text-center mb-2 text-slate-800">Host Your Own Tunnel Server</h2>
+            <p class="text-center text-slate-600 mb-10 max-w-xl mx-auto">
+                Want full control? You can host the HTTP Tunnel server yourself.
+                Requires a domain and wildcard subdomain pointing to your server.
+            </p>
+            <div class="max-w-2xl mx-auto bg-white p-8 rounded-xl shadow-xl">
+                <div class="grid sm:grid-cols-2 gap-6">
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 text-blue-500 lucide lucide-box"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" x2="12" y1="22" y2="12"/></svg>
+                            Docker (Recommended)
+                        </h3>
+                        <p class="text-slate-600 mb-3 text-sm">Easiest way to get started.</p>
+                        <div class="code-block text-sm">
+                            <pre id="code-docker-pull">docker pull kaenova/tunnel</pre>
+                             <button class="copy-button tooltip" onclick="copyToClipboard('code-docker-pull', 'tooltip-docker-pull')">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                <span class="tooltiptext" id="tooltip-docker-pull">Copy</span>
+                            </button>
+                        </div>
+                        <div class="code-block text-sm mt-2">
+                            <pre id="code-docker-run">docker run -d -p 80:80 kaenova/tunnel</pre>
+                            <button class="copy-button tooltip" onclick="copyToClipboard('code-docker-run', 'tooltip-docker-run')">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                <span class="tooltiptext" id="tooltip-docker-run">Copy</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 text-blue-500 lucide lucide-terminal"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+                            Manual Build
+                        </h3>
+                        <p class="text-slate-600 mb-3 text-sm">Build from source using Go.</p>
+                        <div class="code-block text-sm">
+                            <pre id="code-manual-build">git clone https://github.com/kaenova/http-tunnels.git
+cd http-tunnels
+go build -o tunnel-server main.go
+sudo ./tunnel-server</pre>
+                            <button class="copy-button tooltip" onclick="copyToClipboard('code-manual-build', 'tooltip-manual-build')">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                <span class="tooltiptext" id="tooltip-manual-build">Copy</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <p class="text-slate-600 mt-6 text-sm">
+                    For detailed server setup, prerequisites (like domain configuration), and advanced usage, please refer to the
+                    <a href="https://github.com/kaenova/http-tunnels#hosting-the-tunnel-server" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline font-medium">full documentation on GitHub</a>.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <footer class="bg-slate-800 text-slate-300 py-12">
+        <div class="container mx-auto px-6 text-center">
+            <div class="mb-4">
+                 <a href="https://trakteer.id/kaenova/tip" target="_blank" rel="noopener noreferrer" class="inline-flex items-center bg-pink-500 text-white px-6 py-2 rounded-lg hover:bg-pink-600 transition-colors text-base">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 lucide lucide-heart"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+                    Support via Trakteer
+                </a>
+            </div>
+            <p class="mb-2">
+                HTTP Tunnels is an open-source project by <a href="https://github.com/kaenova" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline">kaenova</a>.
+            </p>
+            <p class="text-sm">
+                Licensed under the <a href="https://github.com/kaenova/http-tunnels/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline">MIT License</a>.
+            </p>
+            <p class="text-xs mt-4 text-slate-400">
+                &copy; <span id="currentYear"></span> HTTP Tunnels. All rights reserved.
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        // Tab functionality
+        const tabButtons = document.querySelectorAll('.tab-button');
+        const tabContents = document.querySelectorAll('.tab-content');
+
+        function showTab(tabName) {
+            tabContents.forEach(content => {
+                content.classList.add('hidden');
+            });
+            tabButtons.forEach(button => {
+                button.classList.remove('tab-active');
+                button.classList.add('tab-inactive');
+            });
+
+            document.getElementById('content-' + tabName).classList.remove('hidden');
+            document.getElementById('tab-' + tabName).classList.add('tab-active');
+            document.getElementById('tab-' + tabName).classList.remove('tab-inactive');
+        }
+
+        // Initialize with the first tab active
+        if (tabButtons.length > 0) {
+            showTab('brew'); // Default to 'brew' tab
+        }
+        
+        // Copy to clipboard
+        function copyToClipboard(elementId, tooltipId) {
+            const textToCopy = document.getElementById(elementId).innerText;
+            // Use a temporary textarea element to copy text
+            const textarea = document.createElement('textarea');
+            textarea.value = textToCopy;
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy'); // Using execCommand for broader compatibility in iFrames
+                const tooltip = document.getElementById(tooltipId);
+                tooltip.innerText = 'Copied!';
+                setTimeout(() => {
+                    tooltip.innerText = 'Copy';
+                }, 1500);
+            } catch (err) {
+                console.error('Failed to copy: ', err);
+                const tooltip = document.getElementById(tooltipId);
+                tooltip.innerText = 'Failed!';
+                 setTimeout(() => {
+                    tooltip.innerText = 'Copy';
+                }, 1500);
+            }
+            document.body.removeChild(textarea);
+        }
+
+        // Set current year in footer
+        document.getElementById('currentYear').textContent = new Date().getFullYear();
+
+    </script>
+</body>
+</html>

@@ -24,13 +24,32 @@ If you want to support the service, consider donating to my [Trakteer](https://t
 
 ## Using the Tunnel Client
 
-### Download the Client Binary
+### Install the Tunnel Client
 
-1. Go to the [Releases Page](https://github.com/kaenova/http-tunnels/releases). Or install by using `go install`:
-  ```bash
-  go install github.com/kaenova/http-tunnels@latest
-  ```
-2. Download the appropriate binary for your platform (e.g., Windows, macOS, Linux).
+You can use Golang, Brew, Winget, or download the binary directly.
+
+#### Option 1: Install via Brew (macOS / Linux)
+
+```bash
+brew install kaenova/tunnel/http-tunnels
+```
+
+#### Option 2: Install via Winget (Windows)
+
+```bash
+winget install kaenova.http-tunnels
+```
+
+#### Option 3: Install via Go
+If you have Go installed, you can install the client using the following command:
+
+```bash
+go install github.com/kaenova/http-tunnels@latest
+```
+
+#### Option 4: Download the Binary
+
+Go to the [Releases Page](https://github.com/kaenova/http-tunnels/releases). Choose your corresponding platform and download the binary. Make sure to give it execute permissions.
 
 ### Run the Client
 
