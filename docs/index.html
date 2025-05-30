@@ -155,14 +155,6 @@
             <div class="max-w-2xl mx-auto bg-white p-6 sm:p-8 rounded-xl shadow-xl">
                 <div class="mb-6 border-b border-slate-200">
                     <nav class="-mb-px flex space-x-1 sm:space-x-4 overflow-scroll" aria-label="Tabs">
-                        <button onclick="showTab('brew')" id="tab-brew" class="tab-button tab-active whitespace-nowrap py-3 px-2 sm:px-4 border-b-2 font-medium text-sm sm:text-base">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1 lucide lucide-beer"><path d="M17 11h1a3 3 0 0 1 0 6h-1"/><path d="M9 12v6"/><path d="M13 12v6"/><path d="M14 7.5c0-.8-.5-1.5-1.2-1.5H8.2c-.7 0-1.2.7-1.2 1.5V12h7V7.5Z"/><path d="M12 6V5a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v1"/><path d="M7 12h10v6a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2Z"/></svg>
-                            Brew (macOS/Linux)
-                        </button>
-                        <button onclick="showTab('winget')" id="tab-winget" class="tab-button tab-inactive whitespace-nowrap py-3 px-2 sm:px-4 border-b-2 font-medium text-sm sm:text-base">
-                           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1 lucide lucide-laptop"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55A1 1 0 0 1 20.28 20H3.72a1 1 0 0 1-.98-1.45L4 16"/></svg>
-                            Winget (Windows)
-                        </button>
                         <button onclick="showTab('go')" id="tab-go" class="tab-button tab-inactive whitespace-nowrap py-3 px-2 sm:px-4 border-b-2 font-medium text-sm sm:text-base">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1 lucide lucide-braces"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></svg>
                             Go Install
@@ -380,7 +372,7 @@ sudo ./tunnel-server</pre>
 
         // Initialize with the first tab active
         if (tabButtons.length > 0) {
-            showTab('brew'); // Default to 'brew' tab
+            showTab('go'); // Default to 'go' tab
         }
         
         // Copy to clipboard
