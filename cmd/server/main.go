@@ -228,10 +228,17 @@ func main() {
 		}
 
 		reqID := generateRequestID()
+
+		// Generate path and query string
+		path := r.URL.Path
+		if r.URL.RawQuery != "" {
+			path += "?" + r.URL.RawQuery
+		}
+
 		reqMsg := RequestMessage{
 			ID:      reqID,
 			Method:  r.Method,
-			Path:    r.URL.Path,
+			Path:    path,
 			Headers: r.Header,
 			Body:    body,
 		}
