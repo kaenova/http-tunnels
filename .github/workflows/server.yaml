@@ -7,7 +7,7 @@ on:
     paths:
       - Dockerfile
       - .github/workflows/server.yaml
-      - server/**
+      - cmd/server/**
 env:
   TAGS: ${{ github.sha }}
 
