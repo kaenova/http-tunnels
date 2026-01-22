@@ -184,10 +184,24 @@ func RequestNewTunnel(config *AppConfig) TunnelConfig {
 
 func StartTunnelServer(config *AppConfig, tunConfig TunnelConfig) {
 
-	uTunnel := url.URL{Scheme: "ws", Host: config.TunnelServer.Host, Path: "/tunnel", RawQuery: "domain=" + tunConfig.Domain + "&domain_key=" + tunConfig.DomainKey}
-	conn, _, err := websocket.DefaultDialer.Dial(uTunnel.String(), nil)
+	// Determine websocket scheme based on tunnel server scheme
+	wsScheme := "ws"
+	if config.TunnelServer.Scheme == "https" {
+		wsScheme = "wss"
+	}
+
+	uTunnel := url.URL{Scheme: wsScheme, Host: config.TunnelServer.Host, Path: "/tunnel", RawQuery: "domain=" + tunConfig.Domain + "&domain_key=" + tunConfig.DomainKey}
+	log.Printf("Connecting to websocket: %s", uTunnel.String())
+
+	conn, resp, err := websocket.DefaultDialer.Dial(uTunnel.String(), nil)
 	if err != nil {
-		log.Fatal("Dial error:", err)
+		log.Printf("Dial error: %v", err)
+		if resp != nil {
+			log.Printf("Response status: %d", resp.StatusCode)
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("Response body: %s", string(body))
+		}
+		log.Fatal("Failed to connect to tunnel server")
 	}
 
 	defer conn.Close()
