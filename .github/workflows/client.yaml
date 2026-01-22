@@ -12,14 +12,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # Required to create a release
-    steps:
+    steps: 
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version:  '1.21'
 
       - name: Create dist directory
         run: mkdir -p dist
@@ -30,8 +30,14 @@ jobs:
       - name: Build Darwin ARM64
         run: GOOS=darwin GOARCH=arm64 go build -o dist/http-tunnels-darwin-arm64 ./http_tunnels.go
 
+      - name: Build Linux AMD64
+        run: GOOS=linux GOARCH=amd64 go build -o dist/http-tunnels-linux-amd64 ./http_tunnels.go
+
+      - name: Build Linux ARM64
+        run:  GOOS=linux GOARCH=arm64 go build -o dist/http-tunnels-linux-arm64 ./http_tunnels.go
+
       - name: Build Windows AMD64
-        run: GOOS=windows GOARCH=amd64 go build -o dist/http-tunnels-windows-amd64.exe ./http_tunnels.go
+        run:  GOOS=windows GOARCH=amd64 go build -o dist/http-tunnels-windows-amd64.exe ./http_tunnels.go
 
       - name: Build Windows ARM64
         run: GOOS=windows GOARCH=arm64 go build -o dist/http-tunnels-windows-arm64.exe ./http_tunnels.go
@@ -40,6 +46,8 @@ jobs:
         run: |
           tar -czvf dist/http-tunnels-darwin-amd64.tar.gz -C dist http-tunnels-darwin-amd64
           tar -czvf dist/http-tunnels-darwin-arm64.tar.gz -C dist http-tunnels-darwin-arm64
+          tar -czvf dist/http-tunnels-linux-amd64.tar.gz -C dist http-tunnels-linux-amd64
+          tar -czvf dist/http-tunnels-linux-arm64.tar.gz -C dist http-tunnels-linux-arm64
           zip -j dist/http-tunnels-windows-amd64.zip dist/http-tunnels-windows-amd64.exe
           zip -j dist/http-tunnels-windows-arm64.zip dist/http-tunnels-windows-arm64.exe
 
@@ -49,11 +57,13 @@ jobs:
           # Sets the release name to the tag name (e.g., "v1.0.0")
           name: ${{ github.ref_name }}
           # Sets the tag for the release to the tag that triggered the workflow
-          tag_name: ${{ github.ref_name }}
+          tag_name:  ${{ github.ref_name }}
           # Attaches the compressed binaries as release assets
           files: |
             dist/http-tunnels-darwin-amd64.tar.gz
             dist/http-tunnels-darwin-arm64.tar.gz
+            dist/http-tunnels-linux-amd64.tar.gz
+            dist/http-tunnels-linux-arm64.tar.gz
             dist/http-tunnels-windows-amd64.zip
             dist/http-tunnels-windows-arm64.zip
         env:
