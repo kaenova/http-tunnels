@@ -125,10 +125,6 @@
   html,
   body,
   #root {
-    @apply min-h-screen bg-background text-foreground font-sans antialiased;
-  }
-
-  body {
-    @apply overflow-hidden;
+    @apply h-full bg-background text-foreground font-sans antialiased;
   }
 }

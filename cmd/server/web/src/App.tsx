@@ -6,6 +6,8 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { AdminLayout } from "@/pages/admin-layout"
 import { DashboardPage } from "@/pages/dashboard-page"
 import { LoginPage } from "@/pages/login-page"
+import { RequestActivityDetailPage } from "@/pages/request-activity-detail-page"
+import { RequestActivityPage } from "@/pages/request-activity-page"
 import { TunnelDetailPage } from "@/pages/tunnel-detail-page"
 import { TunnelsPage } from "@/pages/tunnels-page"
 
@@ -38,6 +40,14 @@ const router = createBrowserRouter([
       {
         path: "tunnels/:tunnelId",
         element: <TunnelDetailPage />,
+      },
+      {
+        path: "request-activity",
+        element: <RequestActivityPage />,
+      },
+      {
+        path: "request-activity/:requestId",
+        element: <RequestActivityDetailPage />,
       },
     ],
   },

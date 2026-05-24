@@ -35,10 +35,10 @@ export function AdminLayout() {
   }
 
   return (
-    <SidebarProvider>
+    <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar />
-      <SidebarInset>
-        <div className="flex h-14 items-center gap-3 border-b px-4">
+      <SidebarInset className="min-h-0 overflow-hidden">
+        <div className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-5" />
           <div className="flex flex-col">

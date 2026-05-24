@@ -83,6 +83,12 @@ export type RequestLogListResponse = {
   totalPages: number
 }
 
+export type RequestActivityFilters = {
+  search: string
+  method: string
+  statusClass: string
+}
+
 export type StatusChartPoint = {
   bucket: string
   twoXX: number
@@ -117,6 +123,26 @@ export class ApiError extends Error {
     super(message)
     this.status = status
   }
+}
+
+function buildQueryString(values: Record<string, string | number | undefined>) {
+  const params = new URLSearchParams()
+
+  Object.entries(values).forEach(([key, value]) => {
+    if (value === undefined) {
+      return
+    }
+
+    const normalized = String(value).trim()
+    if (normalized === "") {
+      return
+    }
+
+    params.set(key, normalized)
+  })
+
+  const query = params.toString()
+  return query ? `?${query}` : ""
 }
 
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
@@ -154,13 +180,29 @@ export const api = {
       body: JSON.stringify({ password }),
     }),
   dashboard: () => request<DashboardResponse>("/api/admin/dashboard"),
+  listRequestActivity: (
+    page: number,
+    pageSize: number,
+    filters: RequestActivityFilters
+  ) =>
+    request<RequestLogListResponse>(
+      `/api/admin/request-activity${buildQueryString({
+        page,
+        pageSize,
+        search: filters.search,
+        method: filters.method,
+        statusClass: filters.statusClass,
+      })}`
+    ),
+  requestActivityDetail: (requestId: string) =>
+    request<RequestResponseLog>(`/api/admin/request-activity/${requestId}`),
   listTunnels: (page: number, pageSize: number) =>
     request<TunnelListResponse>(
-      `/api/admin/tunnels?page=${page}&pageSize=${pageSize}`
+      `/api/admin/tunnels${buildQueryString({ page, pageSize })}`
     ),
   tunnelDetail: (tunnelId: string, page: number, pageSize: number) =>
     request<TunnelDetailResponse>(
-      `/api/admin/tunnels/${tunnelId}?page=${page}&pageSize=${pageSize}`
+      `/api/admin/tunnels/${tunnelId}${buildQueryString({ page, pageSize })}`
     ),
   deleteTunnel: (tunnelId: string) =>
     request<{ ok: boolean }>(`/api/admin/tunnels/${tunnelId}`, {

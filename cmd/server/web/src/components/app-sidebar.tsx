@@ -1,5 +1,12 @@
 import { Link, useLocation } from "react-router-dom"
-import { ActivityIcon, LayoutDashboardIcon, LogOutIcon } from "lucide-react"
+import {
+  ActivityIcon,
+  FileClockIcon,
+  LayoutDashboardIcon,
+  LogOutIcon,
+} from "lucide-react"
+
+import { cn } from "@/lib/utils"
 
 import {
   Sidebar,
@@ -27,6 +34,11 @@ const menuItems = [
     href: "/admin/tunnels",
     icon: ActivityIcon,
   },
+  {
+    title: "Request Activity",
+    href: "/admin/request-activity",
+    icon: FileClockIcon,
+  },
 ]
 
 export function AppSidebar() {
@@ -35,7 +47,13 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <div className="flex items-center gap-3 rounded-lg border border-sidebar-border bg-background px-3 py-3">
+        <Link
+          to="/admin"
+          className={cn(
+            "flex items-center gap-3 rounded-lg border border-sidebar-border bg-background px-3 py-3 transition-[padding,gap]",
+            "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-2"
+          )}
+        >
           <div className="flex size-10 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
             <ActivityIcon />
           </div>
@@ -47,7 +65,7 @@ export function AppSidebar() {
               Admin Console
             </span>
           </div>
-        </div>
+        </Link>
       </SidebarHeader>
 
       <SidebarSeparator />
@@ -82,7 +100,12 @@ export function AppSidebar() {
       <SidebarSeparator />
 
       <SidebarFooter>
-        <div className="flex items-center gap-3 rounded-lg border border-sidebar-border bg-background px-3 py-3">
+        <div
+          className={cn(
+            "flex items-center gap-3 rounded-lg border border-sidebar-border bg-background px-3 py-3 transition-[padding,gap]",
+            "group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-2 group-data-[collapsible=icon]:px-2"
+          )}
+        >
           <Avatar>
             <AvatarFallback>AU</AvatarFallback>
           </Avatar>

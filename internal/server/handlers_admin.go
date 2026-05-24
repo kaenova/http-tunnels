@@ -54,6 +54,16 @@ func (a *App) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.handleDashboardAPI(w, r)
+	case path == "/request-activity":
+		if !a.requireAdminAPI(w, r) {
+			return
+		}
+		a.handleRequestActivityListAPI(w, r)
+	case strings.HasPrefix(path, "/request-activity/"):
+		if !a.requireAdminAPI(w, r) {
+			return
+		}
+		a.handleRequestActivityDetailAPI(w, r, strings.TrimPrefix(path, "/request-activity/"))
 	case path == "/tunnels":
 		if !a.requireAdminAPI(w, r) {
 			return
@@ -135,6 +145,50 @@ func (a *App) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
 		})
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *App) handleRequestActivityListAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	page, pageSize := parsePaginationParams(r)
+	filters := RequestLogFilters{
+		Search:      strings.TrimSpace(r.URL.Query().Get("search")),
+		Method:      strings.TrimSpace(r.URL.Query().Get("method")),
+		StatusClass: strings.TrimSpace(r.URL.Query().Get("statusClass")),
+	}
+
+	response, err := a.store.ListAllRequestLogs(r.Context(), filters, page, pageSize)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *App) handleRequestActivityDetailAPI(w http.ResponseWriter, r *http.Request, suffix string) {
+	requestLogID := strings.Trim(strings.TrimSpace(suffix), "/")
+	if requestLogID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	response, err := a.store.GetRequestLogByID(r.Context(), requestLogID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, response)

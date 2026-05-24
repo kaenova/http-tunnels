@@ -368,6 +368,61 @@ func (s *Store) ListRequestLogs(ctx context.Context, tunnelID string, page, page
 	}, nil
 }
 
+func (s *Store) ListAllRequestLogs(ctx context.Context, filters RequestLogFilters, page, pageSize int) (RequestLogListResponse, error) {
+	page, pageSize = normalizePagination(page, pageSize)
+	whereClause, args := buildRequestLogFilterClause(filters)
+
+	countQuery := `
+		SELECT COUNT(1)
+		FROM request_response_logs
+	` + whereClause
+
+	var totalItems int64
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+		return RequestLogListResponse{}, fmt.Errorf("counting request activity logs failed: %w", err)
+	}
+
+	dataQuery := `
+		SELECT id, tunnel_id, domain, method, path, request_headers_json, response_headers_json, request_preview,
+		       response_preview, request_content_type, response_content_type, request_bytes, response_bytes, status_code,
+		       started_at, completed_at, duration_ms, error_message
+		FROM request_response_logs
+	` + whereClause + `
+		ORDER BY started_at DESC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := s.db.QueryContext(ctx, dataQuery, append(args, pageSize, (page-1)*pageSize)...)
+	if err != nil {
+		return RequestLogListResponse{}, fmt.Errorf("listing request activity logs failed: %w", err)
+	}
+	defer rows.Close()
+
+	items, err := collectRequestLogs(rows)
+	if err != nil {
+		return RequestLogListResponse{}, err
+	}
+
+	return RequestLogListResponse{
+		Items:      items,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalItems: totalItems,
+		TotalPages: totalPages(totalItems, pageSize),
+	}, nil
+}
+
+func (s *Store) GetRequestLogByID(ctx context.Context, requestLogID string) (RequestResponseLog, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, tunnel_id, domain, method, path, request_headers_json, response_headers_json, request_preview,
+		       response_preview, request_content_type, response_content_type, request_bytes, response_bytes, status_code,
+		       started_at, completed_at, duration_ms, error_message
+		FROM request_response_logs
+		WHERE id = ?
+	`, requestLogID)
+	return scanRequestLog(row)
+}
+
 func (s *Store) GetDashboard(ctx context.Context) (DashboardResponse, error) {
 	summary, err := s.dashboardSummary(ctx)
 	if err != nil {
@@ -517,7 +572,7 @@ func (s *Store) listRecentTunnelCreations(ctx context.Context, limit int, tunnel
 
 func (s *Store) statusChart(ctx context.Context, tunnelID string, days int) ([]StatusChartPoint, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT strftime('%Y-%m-%d', started_at) AS bucket,
+		SELECT substr(CAST(started_at AS TEXT), 1, 10) AS bucket,
 		       SUM(CASE WHEN status_code BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS two_xx,
 		       SUM(CASE WHEN status_code BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS three_xx,
 		       SUM(CASE WHEN status_code BETWEEN 400 AND 499 THEN 1 ELSE 0 END) AS four_xx,
@@ -526,7 +581,7 @@ func (s *Store) statusChart(ctx context.Context, tunnelID string, days int) ([]S
 		WHERE tunnel_id = ? AND started_at >= ?
 		GROUP BY bucket
 		ORDER BY bucket ASC
-	`, tunnelID, time.Now().UTC().AddDate(0, 0, -(days - 1)))
+	`, tunnelID, time.Now().UTC().AddDate(0, 0, -(days-1)))
 	if err != nil {
 		return nil, fmt.Errorf("loading status chart failed: %w", err)
 	}
@@ -535,9 +590,14 @@ func (s *Store) statusChart(ctx context.Context, tunnelID string, days int) ([]S
 	points := make([]StatusChartPoint, 0, days)
 	for rows.Next() {
 		var point StatusChartPoint
-		if err := rows.Scan(&point.Bucket, &point.TwoXX, &point.ThreeXX, &point.FourXX, &point.FiveXX); err != nil {
+		var bucket sql.NullString
+		if err := rows.Scan(&bucket, &point.TwoXX, &point.ThreeXX, &point.FourXX, &point.FiveXX); err != nil {
 			return nil, fmt.Errorf("scanning status chart failed: %w", err)
 		}
+		if !bucket.Valid || strings.TrimSpace(bucket.String) == "" {
+			continue
+		}
+		point.Bucket = bucket.String
 		points = append(points, point)
 	}
 	if err := rows.Err(); err != nil {
@@ -548,14 +608,14 @@ func (s *Store) statusChart(ctx context.Context, tunnelID string, days int) ([]S
 
 func (s *Store) trafficChart(ctx context.Context, tunnelID string, days int) ([]TrafficChartPoint, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT strftime('%Y-%m-%d', started_at) AS bucket,
+		SELECT substr(CAST(started_at AS TEXT), 1, 10) AS bucket,
 		       COALESCE(SUM(request_bytes), 0) AS inbound_bytes,
 		       COALESCE(SUM(response_bytes), 0) AS outbound_bytes
 		FROM request_response_logs
 		WHERE tunnel_id = ? AND started_at >= ?
 		GROUP BY bucket
 		ORDER BY bucket ASC
-	`, tunnelID, time.Now().UTC().AddDate(0, 0, -(days - 1)))
+	`, tunnelID, time.Now().UTC().AddDate(0, 0, -(days-1)))
 	if err != nil {
 		return nil, fmt.Errorf("loading traffic chart failed: %w", err)
 	}
@@ -564,15 +624,53 @@ func (s *Store) trafficChart(ctx context.Context, tunnelID string, days int) ([]
 	points := make([]TrafficChartPoint, 0, days)
 	for rows.Next() {
 		var point TrafficChartPoint
-		if err := rows.Scan(&point.Bucket, &point.InboundBytes, &point.OutboundBytes); err != nil {
+		var bucket sql.NullString
+		if err := rows.Scan(&bucket, &point.InboundBytes, &point.OutboundBytes); err != nil {
 			return nil, fmt.Errorf("scanning traffic chart failed: %w", err)
 		}
+		if !bucket.Valid || strings.TrimSpace(bucket.String) == "" {
+			continue
+		}
+		point.Bucket = bucket.String
 		points = append(points, point)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating traffic chart failed: %w", err)
 	}
 	return ensureTrafficChartBuckets(points, days), nil
+}
+
+func buildRequestLogFilterClause(filters RequestLogFilters) (string, []any) {
+	conditions := make([]string, 0, 3)
+	args := make([]any, 0, 5)
+
+	if search := strings.TrimSpace(filters.Search); search != "" {
+		like := "%" + search + "%"
+		conditions = append(conditions, `(id LIKE ? OR domain LIKE ? OR path LIKE ?)`)
+		args = append(args, like, like, like)
+	}
+
+	if method := strings.ToUpper(strings.TrimSpace(filters.Method)); method != "" {
+		conditions = append(conditions, `method = ?`)
+		args = append(args, method)
+	}
+
+	switch strings.ToUpper(strings.TrimSpace(filters.StatusClass)) {
+	case "2XX":
+		conditions = append(conditions, `status_code BETWEEN 200 AND 299`)
+	case "3XX":
+		conditions = append(conditions, `status_code BETWEEN 300 AND 399`)
+	case "4XX":
+		conditions = append(conditions, `status_code BETWEEN 400 AND 499`)
+	case "5XX":
+		conditions = append(conditions, `status_code BETWEEN 500 AND 599`)
+	}
+
+	if len(conditions) == 0 {
+		return "", args
+	}
+
+	return " WHERE " + strings.Join(conditions, " AND "), args
 }
 
 func scanTunnelRecord(scanner interface{ Scan(dest ...any) error }) (TunnelRecord, error) {

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react"
-import { useMutation, useQuery } from "@tanstack/react-query"
-import { Navigate, useNavigate } from "react-router-dom"
+import { useEffect, useMemo, useState } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Navigate, useLocation, useNavigate } from "react-router-dom"
 import { LockIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -26,8 +26,15 @@ import { Skeleton } from "@/components/ui/skeleton"
 
 export function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const queryClient = useQueryClient()
   const [password, setPassword] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
+
+  const redirectTo = useMemo(() => {
+    const state = location.state as { redirectTo?: string } | null
+    return state?.redirectTo || "/admin"
+  }, [location.state])
 
   const sessionQuery = useQuery({
     queryKey: ["admin-session"],
@@ -39,8 +46,12 @@ export function LoginPage() {
   const loginMutation = useMutation({
     mutationFn: (value: string) => api.login(value),
     onSuccess: async () => {
+      await queryClient.fetchQuery({
+        queryKey: ["admin-session"],
+        queryFn: api.session,
+      })
       toast.success("Authenticated. Redirecting to the admin dashboard.")
-      navigate("/admin", { replace: true })
+      navigate(redirectTo, { replace: true })
     },
     onError: (error: ApiError) => {
       setErrorMessage(error.message)

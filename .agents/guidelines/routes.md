@@ -47,6 +47,8 @@ The React app owns only the admin browser paths:
 - `/admin`
 - `/admin/tunnels`
 - `/admin/tunnels/:tunnelId`
+- `/admin/request-activity`
+- `/admin/request-activity/:requestId`
 
 ### Current pattern
 
@@ -71,10 +73,11 @@ Both layers should remain aligned.
 
 ## Sidebar routing pattern
 
-The sidebar currently exposes two hardcoded navigation entries:
+The sidebar currently exposes three hardcoded navigation entries:
 
 - Dashboard
 - Active Subdomain
+- Request Activity
 
 When adding a new admin page:
 
@@ -125,3 +128,15 @@ Do not move the admin SPA under a different asset prefix without updating:
 3. return JSON consistently
 4. add frontend API helpers in `cmd/server/web/src/lib/api.ts`
 5. invalidate or refetch related queries in the frontend
+
+### Request activity route pattern
+
+The request activity surface is split into:
+
+- `/admin/request-activity` for filtered, paginated list browsing
+- `/admin/request-activity/:requestId` for a single request-response detail view
+
+The matching API pattern is:
+
+- `GET /api/admin/request-activity`
+- `GET /api/admin/request-activity/:requestId`

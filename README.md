@@ -178,12 +178,15 @@ Main admin routes:
 - `/admin` - dashboard overview
 - `/admin/tunnels` - paginated active subdomain list
 - `/admin/tunnels/:tunnelId` - tunnel detail, analytics, and request logs
+- `/admin/request-activity` - filtered request activity list across all tunnels
+- `/admin/request-activity/:requestId` - request-response detail view
 
 ### What the dashboard shows
 
 - active connections
 - registered / pending active tunnels
 - request-response logs
+- filtered request activity across all tunnels
 - tunnel creation logs
 - transferred bytes
 - status code analytics (2XX / 3XX / 4XX / 5XX)

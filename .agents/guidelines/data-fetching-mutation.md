@@ -24,6 +24,8 @@ Current stable query keys:
 
 - `['admin-session']`
 - `['dashboard']`
+- `['request-activity', page, pageSize, filters]`
+- `['request-activity-detail', requestId]`
 - `['tunnels', page, pageSize]`
 - `['tunnel-detail', tunnelId, page, pageSize]`
 
@@ -39,6 +41,8 @@ Current pattern:
 - auth session does **not** poll aggressively
 
 Avoid adding shorter polling intervals unless clearly necessary.
+
+Request activity follows the same 5-second polling baseline because new logs can arrive continuously while the admin is observing the system.
 
 ---
 
@@ -64,6 +68,7 @@ After deleting a tunnel, invalidate at least:
 - `['dashboard']`
 - `['tunnels']`
 - related `['tunnel-detail', ...]` state when applicable
+- `['request-activity', ...]` if the deleted tunnel affects currently visible request listings
 
 ---
 

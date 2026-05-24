@@ -25,6 +25,8 @@ bun run build
 - `/admin`
 - `/admin/tunnels`
 - `/admin/tunnels/:tunnelId`
+- `/admin/request-activity`
+- `/admin/request-activity/:requestId`
 
 ## API dependencies
 
@@ -33,6 +35,8 @@ The frontend reads from the Go server admin API:
 - `GET /api/admin/auth/session`
 - `POST /api/admin/auth/login`
 - `GET /api/admin/dashboard`
+- `GET /api/admin/request-activity`
+- `GET /api/admin/request-activity/:requestId`
 - `GET /api/admin/tunnels`
 - `GET /api/admin/tunnels/:tunnelId`
 - `DELETE /api/admin/tunnels/:tunnelId`
