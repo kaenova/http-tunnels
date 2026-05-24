@@ -1,153 +1,262 @@
-# HTTP Tunnel Server and Client
+# HTTP Tunnels
 
-This repository provides an HTTP tunnel server and client implementation. The server allows users to create tunnels for forwarding HTTP requests to a destination server. The client connects to the server and forwards requests to the desired destination. But you can install the client only and use the server hosted by me for free.
+A lightweight Go-based HTTP tunneling service with:
 
-If you want to support the service, consider donating to my [Trakteer](https://trakteer.id/kaenova/tip).
+- streaming tunnel support for **SSE** and **binary downloads**
+- a self-updating CLI via `http-tunnels update`
+- an authenticated **admin dashboard** built with **React + Bun + ShadCN**
+- persistent analytics and request-response logs stored in **SQLite**
+
+If you want to support the hosted public tunnel service, consider donating via [Trakteer](https://trakteer.id/kaenova/tip).
 
 ---
 
 ## Features
 
-- Create HTTP tunnels with custom or random subdomains.
-- WebSocket-based communication for efficient request forwarding.
-- Secure domain key validation for tunnel access.
+- Create tunnels with a custom or random subdomain.
+- Stream responses through the tunnel without buffering the full body first.
+- Support **SSE / event-stream** workloads.
+- Support **binary streaming** for file downloads and other non-text payloads.
+- Persist tunnel registrations, tunnel creation attempts, and request-response analytics.
+- Browse active tunnels and detailed logs from `/admin`.
+- Authenticate the admin dashboard with `WEB_PASSWORD`.
+- Update the client binary in place with `http-tunnels update`.
 
 ---
 
-## Prerequisites
+## Repository layout
 
-- A domain name (e.g., `example.com`) and a wildcard subdomain (e.g., `*.example.com`) pointing to the server hosting this tunneling service.
-- Go 1.23+ installed on your machine (if building the server manually).
-- Alternatively, use the prebuilt Docker image for hosting the server.
+- `http_tunnels.go` - CLI entrypoint for the tunnel client.
+- `cmd/server` - tunnel server entrypoint and embedded admin web assets.
+- `cmd/server/web` - Bun/Vite React admin dashboard source.
+- `internal/client` - tunnel client logic and self-update implementation.
+- `internal/server` - tunnel server, admin API, auth, and SQLite store.
+- `internal/protocol` - shared tunnel websocket streaming protocol.
+- `.agents/guidelines` - implementation patterns for this repository.
+
+Before changing the codebase, read `.agents/guidelines/README.md` and follow the documented patterns.
 
 ---
 
-## Using the Tunnel Client
+## Requirements
 
-### Install the Tunnel Client
+### Client
 
-You can use Golang or download the binary directly.
+- Go 1.23+
+- or a released binary from GitHub Releases
 
-#### Install via Go
-If you have Go installed, you can install the client using the following command:
+### Server
+
+- Go 1.23+
+- [Bun](https://bun.sh) to build the admin web assets locally
+- wildcard DNS pointing to the tunnel server host
+
+---
+
+## Install the client
+
+### Option 1: Install with Go
 
 ```bash
 go install github.com/kaenova/http-tunnels@latest
 ```
 
-#### Download the Binary
+### Option 2: Download a release binary
 
-Go to the [Releases Page](https://github.com/kaenova/http-tunnels/releases). Choose your corresponding platform and download the binary. Make sure to give it execute permissions.
+Download the matching archive from:
 
-### Run the Client
+- <https://github.com/kaenova/http-tunnels/releases>
 
-By default the host is connected to my server. You can use it for free! If you want to support the servies, consider dontating to my [Trakteer](https://trakteer.id/kaenova/tip).
+Available release assets follow this pattern:
 
-```bash
-http-tunnels <destination_server>
-```
-
-or using your own server
-
-```bash
-http-tunnels -host http://<your-domain> <destination_server>
-```
-
-You can Replace `<your-tunnel-domain>` with your server's domain (e.g., `example.com`) and `<destination_server>` with the URL of the server you want to forward requests to (e.g., `http://localhost:8080`).
-
-
-
+- `http-tunnels-darwin-amd64.tar.gz`
+- `http-tunnels-darwin-arm64.tar.gz`
+- `http-tunnels-linux-amd64.tar.gz`
+- `http-tunnels-linux-arm64.tar.gz`
+- `http-tunnels-windows-amd64.zip`
+- `http-tunnels-windows-arm64.zip`
 
 ---
 
-## Hosting the Tunnel Server
+## Use the client
 
-### Option 1: Build and Run the Server Manually
+By default the client points to the public hosted tunnel service.
 
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/your-repo/http-tunnel.git
-   cd http-tunnel
-   ```
+```bash
+http-tunnels http://localhost:3000
+```
 
-2. **Build the Server**:
-   ```bash
-   go build -o tunnel-server main.go
-   ```
+Use a custom tunnel host:
 
-3. **Run the Server**:
-   ```bash
-   sudo ./tunnel-server
-   ```
-   The server will start listening on port `80`.
+```bash
+http-tunnels -host https://tunnel.example.com http://localhost:3000
+```
 
-4. **Verify the Server**:
-   - Open your browser and navigate to `http://<your-domain>/ping`.
-   - You should see a JSON response:
-     ```json
-     {
-       "ping": "pong",
-       "tunnels": []
-     }
-     ```
+Request a custom subdomain:
 
-### Option 2: Run the Server Using Docker
+```bash
+http-tunnels -host https://tunnel.example.com -subdomain myapp http://localhost:3000
+```
 
-1. **Pull the Docker Image**:
-   ```bash
-   docker pull kaenova/tunnel
-   ```
+### Self-update the client
 
-2. **Run the Docker Container**:
-   ```bash
-   docker run -d -p 80:80 kaenova/tunnel
-   ```
+```bash
+http-tunnels update
+```
 
-3. **Verify the Server**:
-   - Open your browser and navigate to `http://<your-domain>/ping`.
-   - You should see a JSON response:
-     ```json
-     {
-       "ping": "pong",
-       "tunnels": []
-     }
-     ```
+The update command:
+
+1. detects your current OS and architecture
+2. fetches the latest GitHub release for `kaenova/http-tunnels`
+3. downloads the matching release asset
+4. replaces the running client binary in place
 
 ---
 
-## Example Usage
+## Run the server locally
 
-### Create a Tunnel with a Custom Subdomain
+### 1. Build the admin dashboard assets
 
-1. Run the client with a custom subdomain:
-   ```bash
-   http-tunnels -host http://<your-domain> -subdomain mysubdomain <destination_server>
-   ```
+```bash
+cd cmd/server/web
+bun install
+bun run build
+cd ../../..
+```
 
-   It will run and connect to the server like this:
-    ```bash
-    http-tunnels -host http://localhost:80 -subdomain kaenova http://localhost:5500
-    2025/05/16 16:18:09 Tunnel created with domain: fpwzd9fv_pe.localhost:80
-    2025/05/16 16:18:09 Domain key: YClFmsr6BosKxaH92tV6UQ
-    2025/05/16 16:18:09 Connected to tunnel server
-    ```
+### 2. Build the server
 
-2. Access the tunnel:
-   - Open your browser and navigate to `http://fpwzd9fv_pe.localhost`.
+```bash
+go build -o http-tunnels-server ./cmd/server
+```
 
-## Notes
+### 3. Run the server
 
-- Ensure your domain and wildcard subdomain (e.g., `example.com` and `*.example.com`) are properly configured to point to the server hosting this tunneling service.
-- Use a reverse proxy (e.g., Nginx) if you want to run the server on a different port or behind HTTPS.
+```bash
+WEB_PASSWORD=change-me \
+WEB_SESSION_SECRET=change-me-too \
+./http-tunnels-server
+```
+
+Then open:
+
+- `http://<your-host>/ping`
+- `http://<your-host>/admin/auth/login`
+
+---
+
+## Run with Docker
+
+The Docker build automatically builds the Bun admin app and embeds it into the Go server binary.
+
+```bash
+docker build -t http-tunnels .
+```
+
+```bash
+docker run --rm \
+  -p 80:80 \
+  -e WEB_PASSWORD=change-me \
+  -e WEB_SESSION_SECRET=change-me-too \
+  -e DB_PATH=/data/http-tunnels.db \
+  -v $(pwd)/data:/data \
+  http-tunnels
+```
+
+---
+
+## Admin dashboard
+
+### Authentication
+
+The admin UI is protected by `WEB_PASSWORD`.
+
+Main admin routes:
+
+- `/admin/auth/login` - login page
+- `/admin/auth/logout` - clears the admin cookie and redirects to login
+- `/admin` - dashboard overview
+- `/admin/tunnels` - paginated active subdomain list
+- `/admin/tunnels/:tunnelId` - tunnel detail, analytics, and request logs
+
+### What the dashboard shows
+
+- active connections
+- registered / pending active tunnels
+- request-response logs
+- tunnel creation logs
+- transferred bytes
+- status code analytics (2XX / 3XX / 4XX / 5XX)
+- inbound vs outbound traffic charts
+
+---
+
+## Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TUNNEL_HOST` | `https://t.kaenova.my.id` | Default client tunnel host. |
+| `LISTEN_ADDR` | `:80` | Server listen address. |
+| `DB_PATH` | `http-tunnels.db` | SQLite database file path. |
+| `SERVER_MESSAGE` | _empty_ | Optional message returned during tunnel registration. |
+| `WEB_PASSWORD` | _empty_ | Required to log in to the admin dashboard. |
+| `WEB_SESSION_SECRET` | `WEB_PASSWORD` | HMAC secret used for the admin auth cookie. |
+| `COOKIE_SECURE` | `false` | Set `true` when serving the admin app behind HTTPS. |
+
+---
+
+## Streaming behavior
+
+The tunnel protocol now streams request and response bodies in chunks over the websocket tunnel.
+
+That means the service can forward:
+
+- `text/event-stream` responses for SSE
+- large binary downloads
+- request uploads without buffering the full payload in memory first
+
+Request-response analytics are still recorded while the stream is in flight.
+
+---
+
+## Development notes
+
+### Admin frontend
+
+```bash
+cd cmd/server/web
+bun install
+bun dev
+```
+
+### Backend
+
+```bash
+go run ./cmd/server
+```
+
+### Client
+
+```bash
+go run . http://localhost:3000
+```
+
+If you change the admin frontend and want the Go server binary to embed the latest assets, rebuild the frontend first:
+
+```bash
+cd cmd/server/web && bun run build
+```
+
+---
+
+## Documentation for contributors and agents
+
+- Read `.agents/guidelines/README.md` first.
+- If you change the established implementation pattern, update the guideline documents too.
+- See `AGENTS.md` for repository-specific working rules.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License. See the LICENSE file for details.
-
----
-
-## Contributing
-
-Feel free to submit issues or pull requests to improve the project.
+This project is licensed under the MIT License.
