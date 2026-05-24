@@ -1,0 +1,101 @@
+# Authentication
+
+## Overview
+
+The admin dashboard uses a simple server-managed cookie session.
+There is no separate user table right now.
+Authentication is gated by the `WEB_PASSWORD` environment variable.
+
+---
+
+## Current auth flow
+
+### Login
+
+1. Browser opens `/admin/auth/login`.
+2. React loads the login page.
+3. The page calls `GET /api/admin/auth/session` to detect current state and server configuration.
+4. On submit, the page calls `POST /api/admin/auth/login` with `{ password }`.
+5. The Go server compares the password against `WEB_PASSWORD`.
+6. On success, the Go server issues the `http_tunnels_admin` cookie.
+7. The frontend redirects to `/admin`.
+
+### Logout
+
+1. The sidebar logout action points to `/admin/auth/logout`.
+2. The Go server clears the cookie.
+3. The user is redirected back to `/admin/auth/login`.
+
+---
+
+## Cookie pattern
+
+The cookie is:
+
+- `HttpOnly`
+- `SameSite=Lax`
+- optionally `Secure` when `COOKIE_SECURE=true`
+- HMAC-signed using `WEB_SESSION_SECRET` (or `WEB_PASSWORD` as fallback)
+- time-limited
+
+### Important rule
+
+Do not move session trust into the frontend.
+The frontend may check session state for routing, but the Go server remains the source of truth.
+
+---
+
+## Server-side protection pattern
+
+### SPA routes
+
+For `/admin/*` routes:
+
+- `/admin/auth/login` is public
+- `/admin/auth/logout` clears the session
+- all other `/admin/*` routes redirect to login if the cookie is invalid or missing
+
+### JSON API routes
+
+For `/api/admin/*` routes:
+
+- `/api/admin/auth/session` is public
+- `/api/admin/auth/login` is public
+- protected routes return `401` JSON when unauthenticated
+
+---
+
+## Frontend protection pattern
+
+The frontend also checks the session using TanStack Query.
+
+### `AdminLayout`
+
+- fetches `/api/admin/auth/session`
+- shows loading state while the session is unknown
+- redirects to `/admin/auth/login` if unauthenticated
+
+### `LoginPage`
+
+- fetches `/api/admin/auth/session`
+- redirects to `/admin` if already authenticated
+- shows server configuration errors when `WEB_PASSWORD` is missing
+
+---
+
+## Environment variables
+
+- `WEB_PASSWORD` - required login password
+- `WEB_SESSION_SECRET` - HMAC secret for admin cookies
+- `COOKIE_SECURE` - set `true` behind HTTPS so the auth cookie is secure-only
+
+---
+
+## Change rules
+
+When changing authentication:
+
+1. preserve server-side enforcement
+2. preserve the `/admin/auth/login` and `/admin/auth/logout` routes unless there is an intentional migration
+3. update both the Go auth handlers and the React session assumptions together
+4. update this guideline if cookie behavior, route names, or auth primitives change
