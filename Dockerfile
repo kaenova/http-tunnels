@@ -30,11 +30,17 @@ RUN go build -o main -ldflags "-s -w" ./cmd/server
 # Stage 3: Create a lightweight runtime image
 FROM alpine:latest
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates && mkdir -p /data
+
+ENV LISTEN_ADDR=:80 \
+    DB_PATH=/data/http-tunnels.db \
+    COOKIE_SECURE=false
 
 WORKDIR /root/
 
 COPY --from=builder /app/main ./main
+
+VOLUME ["/data"]
 
 EXPOSE 80
 

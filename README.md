@@ -149,6 +149,12 @@ Then open:
 
 The Docker build automatically builds the Bun admin app and embeds it into the Go server binary.
 
+The runtime image now ships with these default server environment variables:
+
+- `LISTEN_ADDR=:80`
+- `DB_PATH=/data/http-tunnels.db`
+- `COOKIE_SECURE=false`
+
 ```bash
 docker build -t http-tunnels .
 ```
@@ -158,7 +164,6 @@ docker run --rm \
   -p 80:80 \
   -e WEB_PASSWORD=change-me \
   -e WEB_SESSION_SECRET=change-me-too \
-  -e DB_PATH=/data/http-tunnels.db \
   -v $(pwd)/data:/data \
   http-tunnels
 ```
@@ -199,12 +204,12 @@ Main admin routes:
 | Variable | Default | Description |
 |---|---|---|
 | `TUNNEL_HOST` | `https://t.kaenova.my.id` | Default client tunnel host. |
-| `LISTEN_ADDR` | `:80` | Server listen address. |
-| `DB_PATH` | `http-tunnels.db` | SQLite database file path. |
+| `LISTEN_ADDR` | `:80` | Server listen address. The Docker image sets this explicitly. |
+| `DB_PATH` | `http-tunnels.db` | SQLite database file path. The Docker image overrides this to `/data/http-tunnels.db`. |
 | `SERVER_MESSAGE` | _empty_ | Optional message returned during tunnel registration. |
 | `WEB_PASSWORD` | _empty_ | Required to log in to the admin dashboard. |
 | `WEB_SESSION_SECRET` | `WEB_PASSWORD` | HMAC secret used for the admin auth cookie. |
-| `COOKIE_SECURE` | `false` | Set `true` when serving the admin app behind HTTPS. |
+| `COOKIE_SECURE` | `false` | Set `true` when serving the admin app behind HTTPS. The Docker image defaults it to `false`. |
 
 ---
 
