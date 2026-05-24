@@ -85,6 +85,7 @@ type RequestLogListResponse struct {
 
 type RequestLogFilters struct {
 	Search      string `json:"search,omitempty"`
+	Subdomain   string `json:"subdomain,omitempty"`
 	Method      string `json:"method,omitempty"`
 	StatusClass string `json:"statusClass,omitempty"`
 }

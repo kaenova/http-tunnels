@@ -1,3 +1,5 @@
+import type { ReactNode } from "react"
+
 import {
   Accordion,
   AccordionContent,
@@ -29,12 +31,22 @@ import {
 import { HttpStatusBadge } from "@/components/status-badge"
 import { FileTextIcon } from "lucide-react"
 
-export function RequestLogList({ logs }: { logs: RequestResponseLog[] }) {
+export function RequestLogList({
+  logs,
+  title = "Request and response logs",
+  description = "Every recorded request includes headers, sizes, previews, and timings.",
+  emptyDescription = "Send traffic through this tunnel to populate the analytics log stream.",
+}: {
+  logs: RequestResponseLog[]
+  title?: string
+  description?: ReactNode
+  emptyDescription?: ReactNode
+}) {
   if (logs.length === 0) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Request and response logs</CardTitle>
+          <CardTitle>{title}</CardTitle>
           <CardDescription>
             Detailed logs will appear here when the tunnel starts receiving traffic.
           </CardDescription>
@@ -46,9 +58,7 @@ export function RequestLogList({ logs }: { logs: RequestResponseLog[] }) {
                 <FileTextIcon />
               </EmptyMedia>
               <EmptyTitle>No request logs yet</EmptyTitle>
-              <EmptyDescription>
-                Send traffic through this tunnel to populate the analytics log stream.
-              </EmptyDescription>
+              <EmptyDescription>{emptyDescription}</EmptyDescription>
             </EmptyHeader>
           </Empty>
         </CardContent>
@@ -59,10 +69,8 @@ export function RequestLogList({ logs }: { logs: RequestResponseLog[] }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Request and response logs</CardTitle>
-        <CardDescription>
-          Every recorded request includes headers, sizes, previews, and timings.
-        </CardDescription>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
         <Accordion type="multiple" className="w-full">

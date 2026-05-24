@@ -641,13 +641,18 @@ func (s *Store) trafficChart(ctx context.Context, tunnelID string, days int) ([]
 }
 
 func buildRequestLogFilterClause(filters RequestLogFilters) (string, []any) {
-	conditions := make([]string, 0, 3)
-	args := make([]any, 0, 5)
+	conditions := make([]string, 0, 4)
+	args := make([]any, 0, 6)
 
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		like := "%" + search + "%"
 		conditions = append(conditions, `(id LIKE ? OR domain LIKE ? OR path LIKE ?)`)
 		args = append(args, like, like, like)
+	}
+
+	if subdomain := strings.ToLower(strings.TrimSpace(filters.Subdomain)); subdomain != "" {
+		conditions = append(conditions, `domain LIKE ?`)
+		args = append(args, subdomain+".%")
 	}
 
 	if method := strings.ToUpper(strings.TrimSpace(filters.Method)); method != "" {

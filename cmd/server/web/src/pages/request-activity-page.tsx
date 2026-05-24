@@ -35,6 +35,7 @@ import {
 const pageSize = 15
 const defaultFilters: RequestActivityFilters = {
   search: "",
+  subdomain: "",
   method: "",
   statusClass: "",
 }
@@ -96,8 +97,8 @@ export function RequestActivityPage() {
                 setFilters(draftFilters)
               }}
             >
-              <FieldGroup className="flex flex-col gap-4 xl:flex-row xl:items-end">
-                <Field className="flex-1">
+              <FieldGroup>
+                <Field>
                   <FieldLabel htmlFor="request-activity-search">Search</FieldLabel>
                   <FieldContent>
                     <Input
@@ -110,6 +111,25 @@ export function RequestActivityPage() {
                         }))
                       }
                       placeholder="Search by request ID, domain, or path"
+                    />
+                  </FieldContent>
+                </Field>
+              </FieldGroup>
+
+              <FieldGroup className="flex flex-col gap-4 xl:flex-row xl:items-end">
+                <Field className="xl:min-w-52">
+                  <FieldLabel htmlFor="request-activity-subdomain">Subdomain</FieldLabel>
+                  <FieldContent>
+                    <Input
+                      id="request-activity-subdomain"
+                      value={draftFilters.subdomain}
+                      onChange={(event) =>
+                        setDraftFilters((current) => ({
+                          ...current,
+                          subdomain: event.target.value,
+                        }))
+                      }
+                      placeholder="Filter by subdomain"
                     />
                   </FieldContent>
                 </Field>

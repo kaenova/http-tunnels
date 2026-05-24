@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Navigate, useNavigate, useParams } from "react-router-dom"
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { api, ApiError } from "@/lib/api"
@@ -9,7 +9,6 @@ import { formatBytes, formatDateTime, formatDurationFrom } from "@/lib/format"
 import { DeleteTunnelDialog } from "@/components/delete-tunnel-dialog"
 import { PageHeader } from "@/components/page-header"
 import { PageLoading } from "@/components/page-loading"
-import { PaginationControls } from "@/components/pagination-controls"
 import { RecentCreationList } from "@/components/recent-creation-list"
 import { RequestLogList } from "@/components/request-log-list"
 import { TunnelStateBadge } from "@/components/status-badge"
@@ -24,19 +23,18 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 
-const pageSize = 10
+const recentLogLimit = 5
 
 export function TunnelDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const params = useParams<{ tunnelId: string }>()
   const tunnelId = params.tunnelId
-  const [page, setPage] = useState(1)
   const [deleteOpen, setDeleteOpen] = useState(false)
 
   const detailQuery = useQuery({
-    queryKey: ["tunnel-detail", tunnelId, page, pageSize],
-    queryFn: () => api.tunnelDetail(tunnelId ?? "", page, pageSize),
+    queryKey: ["tunnel-detail", tunnelId, recentLogLimit],
+    queryFn: () => api.tunnelDetail(tunnelId ?? "", 1, recentLogLimit),
     enabled: !!tunnelId,
     refetchInterval: 5000,
   })
@@ -135,11 +133,26 @@ export function TunnelDetailPage() {
           <TrafficChartCard data={detailQuery.data.trafficChart} />
         </div>
 
-        <RequestLogList logs={detailQuery.data.logs.items} />
-        <PaginationControls
-          page={detailQuery.data.logs.page}
-          totalPages={detailQuery.data.logs.totalPages}
-          onPageChange={setPage}
+        <RequestLogList
+          logs={detailQuery.data.logs.items}
+          description={
+            <>
+              Recent request-response logs only. If you want to see more detail, go into{" "}
+              <Link
+                to="/admin/request-activity"
+                className="underline underline-offset-4 hover:text-foreground"
+              >
+                Request Activity
+              </Link>
+              .
+            </>
+          }
+          emptyDescription={
+            <>
+              Send traffic through this tunnel to populate the recent analytics view.
+              If you want to see more detail, go into Request Activity.
+            </>
+          }
         />
 
         <RecentCreationList logs={detailQuery.data.creationHistory} />

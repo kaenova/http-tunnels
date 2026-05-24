@@ -85,6 +85,7 @@ export type RequestLogListResponse = {
 
 export type RequestActivityFilters = {
   search: string
+  subdomain: string
   method: string
   statusClass: string
 }
@@ -190,6 +191,7 @@ export const api = {
         page,
         pageSize,
         search: filters.search,
+        subdomain: filters.subdomain,
         method: filters.method,
         statusClass: filters.statusClass,
       })}`

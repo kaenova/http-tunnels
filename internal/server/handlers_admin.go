@@ -159,6 +159,7 @@ func (a *App) handleRequestActivityListAPI(w http.ResponseWriter, r *http.Reques
 	page, pageSize := parsePaginationParams(r)
 	filters := RequestLogFilters{
 		Search:      strings.TrimSpace(r.URL.Query().Get("search")),
+		Subdomain:   strings.TrimSpace(r.URL.Query().Get("subdomain")),
 		Method:      strings.TrimSpace(r.URL.Query().Get("method")),
 		StatusClass: strings.TrimSpace(r.URL.Query().Get("statusClass")),
 	}
