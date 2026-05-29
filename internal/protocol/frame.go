@@ -14,6 +14,12 @@ const (
 	FrameTypeResponseBody  FrameType = "response_body"
 	FrameTypeResponseEnd   FrameType = "response_end"
 	FrameTypeResponseError FrameType = "response_error"
+
+	// WebSocket tunneling
+	FrameTypeWebSocketUpgrade  FrameType = "ws_upgrade"
+	FrameTypeWebSocketData     FrameType = "ws_data"
+	FrameTypeWebSocketClose    FrameType = "ws_close"
+	FrameTypeWebSocketError    FrameType = "ws_error"
 )
 
 const (

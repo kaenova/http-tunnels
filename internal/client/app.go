@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -245,6 +248,14 @@ func (a *App) handleFrame(frame protocol.Frame) error {
 		return a.finishRequest(frame, nil)
 	case protocol.FrameTypeRequestCancel:
 		return a.finishRequest(frame, context.Canceled)
+	case protocol.FrameTypeWebSocketUpgrade:
+		return a.startWebSocketTunnel(frame)
+	case protocol.FrameTypeWebSocketData:
+		return a.writeWebSocketData(frame)
+	case protocol.FrameTypeWebSocketClose:
+		return a.closeWebSocketTunnel(frame, nil)
+	case protocol.FrameTypeWebSocketError:
+		return a.closeWebSocketTunnel(frame, errors.New(frame.Error))
 	default:
 		return nil
 	}
@@ -379,11 +390,241 @@ func (a *App) sendGatewayError(requestID string, err error) {
 	})
 }
 
+// WebSocket tunnel state
+type wsTunnel struct {
+	ID     string
+	conn   net.Conn
+	mu     sync.Mutex
+	closed bool
+}
+
+var wsTunnels sync.Map
+
+func (a *App) startWebSocketTunnel(frame protocol.Frame) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Build the destination URL
+	localURL, err := protocol.BuildDestinationURL(a.config.DestinationServer, frame.Path)
+	if err != nil {
+		a.sendWebSocketError(frame.ID, err)
+		return nil
+	}
+
+	// Dial the destination via raw TCP (for WebSocket upgrade to work properly)
+	host := localURL.Host
+	if !strings.Contains(host, ":") {
+		if localURL.Scheme == "https" || localURL.Scheme == "wss" {
+			host = host + ":443"
+		} else {
+			host = host + ":80"
+		}
+	}
+
+	dialer := net.Dialer{Timeout: 10 * time.Second}
+	destConn, err := dialer.DialContext(ctx, "tcp", host)
+	if err != nil {
+		a.sendWebSocketError(frame.ID, err)
+		return nil
+	}
+
+	// Build HTTP upgrade request
+	upgradeReq := fmt.Sprintf("GET %s HTTP/1.1\r\n", localURL.Path)
+	upgradeReq += fmt.Sprintf("Host: %s\r\n", localURL.Host)
+	for k, vals := range frame.Headers {
+		if strings.EqualFold(k, "Host") {
+			continue
+		}
+		for _, v := range vals {
+			upgradeReq += k + ": " + v + "\r\n"
+		}
+	}
+	upgradeReq += "\r\n"
+
+	// Send upgrade request
+	if _, err := destConn.Write([]byte(upgradeReq)); err != nil {
+		destConn.Close()
+		a.sendWebSocketError(frame.ID, err)
+		return nil
+	}
+
+	// Read response status line
+	respReader := bufio.NewReader(destConn)
+	statusLine, err := respReader.ReadString('\n')
+	if err != nil {
+		destConn.Close()
+		a.sendWebSocketError(frame.ID, err)
+		return nil
+	}
+
+	// Parse status code
+	parts := strings.SplitN(strings.TrimSpace(statusLine), " ", 3)
+	statusCode := 502
+	if len(parts) >= 2 {
+		if code, err := strconv.Atoi(parts[1]); err == nil {
+			statusCode = code
+		}
+	}
+
+	// Read response headers
+	respHeaders := make(map[string][]string)
+	for {
+		line, err := respReader.ReadString('\n')
+		if err != nil {
+			destConn.Close()
+			a.sendWebSocketError(frame.ID, err)
+			return nil
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			break
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 {
+			key := http.CanonicalHeaderKey(strings.TrimSpace(parts[0]))
+			val := strings.TrimSpace(parts[1])
+			respHeaders[key] = append(respHeaders[key], val)
+		}
+	}
+
+	// Send response start back to server
+	if err := a.conn.Send(protocol.Frame{
+		Type:      protocol.FrameTypeResponseStart,
+		ID:        frame.ID,
+		Status:    statusCode,
+		Headers:   respHeaders,
+		Timestamp: time.Now().UTC(),
+	}); err != nil {
+		destConn.Close()
+		return nil
+	}
+
+	if statusCode != http.StatusSwitchingProtocols {
+		// Upgrade failed — read body and send back
+		body, _ := io.ReadAll(respReader)
+		if len(body) > 0 {
+			_ = a.conn.Send(protocol.Frame{
+				Type:      protocol.FrameTypeResponseBody,
+				ID:        frame.ID,
+				Chunk:     body,
+				Timestamp: time.Now().UTC(),
+			})
+		}
+		_ = a.conn.Send(protocol.Frame{
+			Type:      protocol.FrameTypeResponseEnd,
+			ID:        frame.ID,
+			Timestamp: time.Now().UTC(),
+		})
+		destConn.Close()
+		return nil
+	}
+
+	// WebSocket upgrade successful — tunnel bidirectionally
+	tunnel := &wsTunnel{ID: frame.ID, conn: destConn}
+	wsTunnels.Store(frame.ID, tunnel)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Destination -> Tunnel server
+	go func() {
+		defer wg.Done()
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := respReader.Read(buf)
+			if err != nil {
+				_ = a.conn.Send(protocol.Frame{
+					Type: protocol.FrameTypeWebSocketClose,
+					ID:   frame.ID,
+				})
+				return
+			}
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			if err := a.conn.Send(protocol.Frame{
+				Type:      protocol.FrameTypeWebSocketData,
+				ID:        frame.ID,
+				Chunk:     chunk,
+				Timestamp: time.Now().UTC(),
+			}); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Tunnel server -> Destination
+	go func() {
+		defer wg.Done()
+		// Data will be sent via writeWebSocketData
+		<-a.conn.Closed()
+		tunnel.mu.Lock()
+		if !tunnel.closed {
+			tunnel.conn.Close()
+			tunnel.closed = true
+		}
+		tunnel.mu.Unlock()
+	}()
+
+	wg.Wait()
+	return nil
+}
+
+func (a *App) writeWebSocketData(frame protocol.Frame) error {
+	value, ok := wsTunnels.Load(frame.ID)
+	if !ok {
+		return nil
+	}
+	tunnel := value.(*wsTunnel)
+	tunnel.mu.Lock()
+	defer tunnel.mu.Unlock()
+	if tunnel.closed {
+		return nil
+	}
+	_, err := tunnel.conn.Write(frame.Chunk)
+	return err
+}
+
+func (a *App) closeWebSocketTunnel(frame protocol.Frame, err error) error {
+	value, ok := wsTunnels.LoadAndDelete(frame.ID)
+	if !ok {
+		return nil
+	}
+	tunnel := value.(*wsTunnel)
+	tunnel.mu.Lock()
+	defer tunnel.mu.Unlock()
+	if !tunnel.closed {
+		tunnel.closed = true
+		tunnel.conn.Close()
+	}
+	return nil
+}
+
+func (a *App) sendWebSocketError(requestID string, err error) {
+	_ = a.conn.Send(protocol.Frame{
+		Type:      protocol.FrameTypeWebSocketError,
+		ID:        requestID,
+		Error:     err.Error(),
+		Timestamp: time.Now().UTC(),
+	})
+}
+
 func (a *App) closePendingRequests(err error) {
 	a.requests.Range(func(_, value any) bool {
 		request := value.(*inboundRequest)
 		request.Cancel()
 		_ = request.Body.CloseWithError(err)
+		return true
+	})
+
+	// Close all active WebSocket tunnels
+	wsTunnels.Range(func(_, value any) bool {
+		tunnel := value.(*wsTunnel)
+		tunnel.mu.Lock()
+		if !tunnel.closed {
+			tunnel.closed = true
+			tunnel.conn.Close()
+		}
+		tunnel.mu.Unlock()
 		return true
 	})
 }

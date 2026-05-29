@@ -52,6 +52,16 @@ func (s *TunnelSession) HandleFrame(frame protocol.Frame) error {
 	case protocol.FrameTypeResponseError:
 		stream.fail(fmt.Errorf("%s", frame.Error))
 		s.pending.Delete(frame.ID)
+	case protocol.FrameTypeWebSocketUpgrade:
+		stream.start(frame)
+	case protocol.FrameTypeWebSocketData:
+		stream.write(frame.Chunk)
+	case protocol.FrameTypeWebSocketClose:
+		stream.finish()
+		s.pending.Delete(frame.ID)
+	case protocol.FrameTypeWebSocketError:
+		stream.fail(fmt.Errorf("%s", frame.Error))
+		s.pending.Delete(frame.ID)
 	}
 	return nil
 }

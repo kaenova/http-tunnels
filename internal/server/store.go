@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kaenova/http-tunnels/internal/protocol"
@@ -16,6 +18,12 @@ import (
 
 type Store struct {
 	db *sql.DB
+
+	// Async log queue
+	logQueue    chan RequestResponseLog
+	logWg       sync.WaitGroup
+	logCtx      context.Context
+	logCancel   context.CancelFunc
 }
 
 func OpenStore(dbPath string) (*Store, error) {
@@ -33,6 +41,13 @@ func OpenStore(dbPath string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+
+	// Start async log worker
+	store.logCtx, store.logCancel = context.WithCancel(context.Background())
+	store.logQueue = make(chan RequestResponseLog, 2048)
+	store.logWg.Add(1)
+	go store.logWorker()
+
 	return store, nil
 }
 
@@ -40,7 +55,89 @@ func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	// Stop the log worker
+	if s.logCancel != nil {
+		s.logCancel()
+	}
+	s.logWg.Wait()
+	close(s.logQueue)
 	return s.db.Close()
+}
+
+func (s *Store) logWorker() {
+	defer s.logWg.Done()
+	for {
+		select {
+		case <-s.logCtx.Done():
+			// Drain remaining logs before exit
+			for {
+				select {
+				case logEntry := <-s.logQueue:
+					s.insertRequestLogSync(logEntry)
+				default:
+					return
+				}
+			}
+		case logEntry := <-s.logQueue:
+			s.insertRequestLogSync(logEntry)
+		}
+	}
+}
+
+func (s *Store) insertRequestLogSync(logEntry RequestResponseLog) {
+	requestHeadersJSON, err := marshalHeaders(logEntry.RequestHeaders)
+	if err != nil {
+		log.Printf("marshal request headers: %v", err)
+		return
+	}
+	responseHeadersJSON, err := marshalHeaders(logEntry.ResponseHeaders)
+	if err != nil {
+		log.Printf("marshal response headers: %v", err)
+		return
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		log.Printf("request log begin tx: %v", err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`
+		INSERT INTO request_response_logs (
+			id, tunnel_id, domain, method, path, request_headers_json, response_headers_json, request_preview, response_preview,
+			request_content_type, response_content_type, request_bytes, response_bytes, status_code, started_at, completed_at,
+			duration_ms, error_message
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, logEntry.ID, logEntry.TunnelID, logEntry.Domain, logEntry.Method, logEntry.Path,
+		nullableString(requestHeadersJSON), nullableString(responseHeadersJSON),
+		nullableString(logEntry.RequestPreview), nullableString(logEntry.ResponsePreview),
+		nullableString(logEntry.RequestContentType), nullableString(logEntry.ResponseContentType),
+		logEntry.RequestBytes, logEntry.ResponseBytes, logEntry.StatusCode,
+		logEntry.StartedAt, nullableTimeValue(logEntry.CompletedAt),
+		logEntry.DurationMs, nullableString(logEntry.ErrorMessage))
+	if err != nil {
+		log.Printf("inserting request log: %v", err)
+		return
+	}
+
+	completedAt := time.Now().UTC()
+	_, err = tx.Exec(`
+		UPDATE tunnels
+		SET request_count = request_count + 1,
+		    total_request_bytes = total_request_bytes + ?,
+		    total_response_bytes = total_response_bytes + ?,
+		    last_activity_at = ?
+		WHERE id = ?
+	`, logEntry.RequestBytes, logEntry.ResponseBytes, completedAt, logEntry.TunnelID)
+	if err != nil {
+		log.Printf("updating tunnel counters: %v", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("request log commit: %v", err)
+	}
 }
 
 func (s *Store) configure() error {
@@ -244,51 +341,16 @@ func (s *Store) GetTunnelByID(ctx context.Context, tunnelID string) (TunnelRecor
 }
 
 func (s *Store) RecordRequestLog(ctx context.Context, logEntry RequestResponseLog) error {
-	requestHeadersJSON, err := marshalHeaders(logEntry.RequestHeaders)
-	if err != nil {
-		return err
+	select {
+	case s.logQueue <- logEntry:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		// Queue full — log to stderr and drop
+		log.Printf("request log queue full, dropping log for %s %s", logEntry.Method, logEntry.Path)
+		return nil
 	}
-	responseHeadersJSON, err := marshalHeaders(logEntry.ResponseHeaders)
-	if err != nil {
-		return err
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("starting request log transaction failed: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO request_response_logs (
-			id, tunnel_id, domain, method, path, request_headers_json, response_headers_json, request_preview, response_preview,
-			request_content_type, response_content_type, request_bytes, response_bytes, status_code, started_at, completed_at,
-			duration_ms, error_message
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, logEntry.ID, logEntry.TunnelID, logEntry.Domain, logEntry.Method, logEntry.Path, nullableString(requestHeadersJSON), nullableString(responseHeadersJSON), nullableString(logEntry.RequestPreview), nullableString(logEntry.ResponsePreview), nullableString(logEntry.RequestContentType), nullableString(logEntry.ResponseContentType), logEntry.RequestBytes, logEntry.ResponseBytes, logEntry.StatusCode, logEntry.StartedAt, nullableTimeValue(logEntry.CompletedAt), logEntry.DurationMs, nullableString(logEntry.ErrorMessage))
-	if err != nil {
-		return fmt.Errorf("inserting request log failed: %w", err)
-	}
-
-	completedAt := time.Now().UTC()
-	_, err = tx.ExecContext(ctx, `
-		UPDATE tunnels
-		SET request_count = request_count + 1,
-		    total_request_bytes = total_request_bytes + ?,
-		    total_response_bytes = total_response_bytes + ?,
-		    last_activity_at = ?
-		WHERE id = ?
-	`, logEntry.RequestBytes, logEntry.ResponseBytes, completedAt, logEntry.TunnelID)
-	if err != nil {
-		return fmt.Errorf("updating tunnel counters failed: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing request log transaction failed: %w", err)
-	}
-	return nil
 }
 
 func (s *Store) ListActiveTunnels(ctx context.Context, page, pageSize int) (TunnelListResponse, error) {

@@ -177,6 +177,137 @@ func (a *App) handleTunnelWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) handleTunnelWebSocketUpgrade(session *TunnelSession, requestID string, w http.ResponseWriter, r *http.Request, logEntry RequestResponseLog) {
+	startedAt := time.Now().UTC()
+
+	// Hijack the connection to tunnel WebSocket frames bidirectionally
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send WebSocket upgrade frame to client
+	if err := session.Send(protocol.Frame{
+		Type:      protocol.FrameTypeWebSocketUpgrade,
+		ID:        requestID,
+		Method:    r.Method,
+		Path:      buildRequestPath(r),
+		Headers:   protocol.MergeForwardedHeaders(nil, r),
+		Timestamp: startedAt,
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// Wait for client to confirm upgrade
+	stream := newResponseStream()
+	session.RegisterPending(requestID, stream)
+	defer session.RemovePending(requestID)
+
+	var startFrame protocol.Frame
+	select {
+	case startFrame = <-stream.startCh:
+	case err := <-stream.errCh:
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	case <-session.Conn.Closed():
+		http.Error(w, "tunnel connection closed", http.StatusBadGateway)
+		return
+	case <-r.Context().Done():
+		return
+	}
+
+	if startFrame.Status != http.StatusSwitchingProtocols {
+		// Client couldn't upgrade — return the error response
+		protocol.ApplyHeaders(w.Header(), startFrame.Headers)
+		w.WriteHeader(startFrame.Status)
+		for chunk := range stream.bodyCh {
+			_, _ = w.Write(chunk)
+		}
+		return
+	}
+
+	// Upgrade successful — hijack and tunnel raw bytes
+	clientConn, bufReadWriter, err := hijacker.Hijack()
+	if err != nil {
+		_ = session.Send(protocol.Frame{
+			Type:  protocol.FrameTypeWebSocketError,
+			ID:    requestID,
+			Error: err.Error(),
+		})
+		return
+	}
+	defer clientConn.Close()
+
+	// Write the 101 response to the client
+	if bufReadWriter != nil {
+		_ = bufReadWriter.Reader.Buffered()
+	}
+	responseStart := "HTTP/1.1 101 Switching Protocols\r\n"
+	for k, vals := range startFrame.Headers {
+		for _, v := range vals {
+			responseStart += k + ": " + v + "\r\n"
+		}
+	}
+	responseStart += "\r\n"
+	_, _ = clientConn.Write([]byte(responseStart))
+
+	// Bidirectional tunnel: client TCP <-> server WebSocket frames
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Client -> Tunnel
+	go func() {
+		defer wg.Done()
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := clientConn.Read(buf)
+			if err != nil {
+				_ = session.Send(protocol.Frame{
+					Type: protocol.FrameTypeWebSocketClose,
+					ID:   requestID,
+				})
+				return
+			}
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			if err := session.Send(protocol.Frame{
+				Type:      protocol.FrameTypeWebSocketData,
+				ID:        requestID,
+				Chunk:     chunk,
+				Timestamp: time.Now().UTC(),
+			}); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Tunnel -> Client
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case chunk, ok := <-stream.bodyCh:
+				if !ok {
+					return
+				}
+				if _, err := clientConn.Write(chunk); err != nil {
+					return
+				}
+			case <-stream.errCh:
+				return
+			case <-session.Conn.Closed():
+				return
+			case <-r.Context().Done():
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+}
+
 func (a *App) handleTunnelHTTP(session *TunnelSession, w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now().UTC()
 	requestID := protocol.GenerateID(16)
@@ -193,6 +324,12 @@ func (a *App) handleTunnelHTTP(session *TunnelSession, w http.ResponseWriter, r 
 		RequestHeaders:     requestHeaders,
 		RequestContentType: contentTypeFromHeaders(requestHeaders),
 		StartedAt:          startedAt,
+	}
+
+	// Check for WebSocket upgrade
+	if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
+		a.handleTunnelWebSocketUpgrade(session, requestID, w, r, logEntry)
+		return
 	}
 
 	var (
