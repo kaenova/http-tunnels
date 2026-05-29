@@ -30,6 +30,7 @@ type Config struct {
 	Subdomain         string
 	TunnelServer      *url.URL
 	DestinationServer *url.URL
+	Verbose           bool
 }
 
 type tunnelConfig struct {
@@ -59,6 +60,12 @@ type App struct {
 	httpClient *http.Client
 	conn       *protocol.Connection
 	requests   sync.Map
+}
+
+func (a *App) verbose(format string, v ...any) {
+	if a.config.Verbose {
+		log.Printf("[verbose] "+format, v...)
+	}
 }
 
 func Run(args []string) error {
@@ -107,6 +114,8 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "    \tPublic tunnel host address (default %q or TUNNEL_HOST env var)\n", DefaultTunnelHost)
 	fmt.Fprintln(os.Stderr, "  -subdomain string")
 	fmt.Fprintln(os.Stderr, "    \tSubdomain to use for the tunnel")
+	fmt.Fprintln(os.Stderr, "  -verbose")
+	fmt.Fprintln(os.Stderr, "    \tEnable verbose request/response logging")
 }
 
 func parseConfig(args []string) (*Config, error) {
@@ -119,6 +128,7 @@ func parseConfig(args []string) (*Config, error) {
 	fs.SetOutput(io.Discard)
 	subdomain := fs.String("subdomain", "", "Subdomain to use for the tunnel")
 	host := fs.String("host", tunnelHost, "Public tunnel host address")
+	verbose := fs.Bool("verbose", false, "Enable verbose request/response logging")
 	if err := fs.Parse(args); err != nil {
 		printUsage()
 		return nil, err
@@ -156,6 +166,7 @@ func parseConfig(args []string) (*Config, error) {
 		Subdomain:         strings.TrimSpace(*subdomain),
 		TunnelServer:      tunnelURL,
 		DestinationServer: destinationURL,
+		Verbose:           *verbose,
 	}, nil
 }
 
@@ -262,6 +273,7 @@ func (a *App) handleFrame(frame protocol.Frame) error {
 }
 
 func (a *App) startRequest(frame protocol.Frame) error {
+	a.verbose("REQUEST_START %s %s (id=%s)", frame.Method, frame.Path, frame.ID[:8])
 	ctx, cancel := context.WithCancel(context.Background())
 	bodyReader, bodyWriter := io.Pipe()
 	request := &inboundRequest{
@@ -307,12 +319,17 @@ func (a *App) executeRequest(ctx context.Context, request *inboundRequest, bodyR
 	defer a.requests.Delete(request.ID)
 	defer request.Cancel()
 	defer bodyReader.Close()
+	defer a.verbose("REQUEST_END %s %s (id=%s)", request.Method, request.Path, request.ID[:8])
+
+	startTime := time.Now()
 
 	localURL, err := protocol.BuildDestinationURL(a.config.DestinationServer, request.Path)
 	if err != nil {
 		a.sendGatewayError(request.ID, err)
 		return
 	}
+
+	a.verbose("REQUEST_FORWARD %s %s → %s", request.Method, request.Path, localURL.String())
 
 	httpRequest, err := http.NewRequestWithContext(ctx, request.Method, localURL.String(), bodyReader)
 	if err != nil {
@@ -323,10 +340,13 @@ func (a *App) executeRequest(ctx context.Context, request *inboundRequest, bodyR
 
 	response, err := a.httpClient.Do(httpRequest)
 	if err != nil {
+		a.verbose("REQUEST_ERR %s %s: %v", request.Method, request.Path, err)
 		a.sendGatewayError(request.ID, err)
 		return
 	}
 	defer response.Body.Close()
+
+	a.verbose("RESPONSE_START %s %s → %d (%s)", request.Method, request.Path, response.StatusCode, time.Since(startTime).Round(time.Millisecond))
 
 	if err := a.conn.Send(protocol.Frame{
 		Type:      protocol.FrameTypeResponseStart,
@@ -338,10 +358,12 @@ func (a *App) executeRequest(ctx context.Context, request *inboundRequest, bodyR
 		return
 	}
 
+	var totalBytes int64
 	buffer := make([]byte, protocol.DefaultChunkSize)
 	for {
 		readBytes, readErr := response.Body.Read(buffer)
 		if readBytes > 0 {
+			totalBytes += int64(readBytes)
 			chunk := make([]byte, readBytes)
 			copy(chunk, buffer[:readBytes])
 			if err := a.conn.Send(protocol.Frame{
@@ -361,6 +383,8 @@ func (a *App) executeRequest(ctx context.Context, request *inboundRequest, bodyR
 			break
 		}
 	}
+
+	a.verbose("RESPONSE_DONE %s %s → %d (%s, %s)", request.Method, request.Path, response.StatusCode, time.Since(startTime).Round(time.Millisecond), formatBytes(totalBytes))
 
 	_ = a.conn.Send(protocol.Frame{
 		Type:      protocol.FrameTypeResponseEnd,
@@ -401,6 +425,7 @@ type wsTunnel struct {
 var wsTunnels sync.Map
 
 func (a *App) startWebSocketTunnel(frame protocol.Frame) error {
+	a.verbose("WS_UPGRADE %s %s (id=%s)", frame.Method, frame.Path, frame.ID[:8])
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -447,6 +472,8 @@ func (a *App) startWebSocketTunnel(frame protocol.Frame) error {
 		a.sendWebSocketError(frame.ID, err)
 		return nil
 	}
+
+	a.verbose("WS_UPGRADE_SENT %s → %s", frame.Path, host)
 
 	// Read response status line
 	respReader := bufio.NewReader(destConn)
@@ -500,7 +527,8 @@ func (a *App) startWebSocketTunnel(frame protocol.Frame) error {
 	}
 
 	if statusCode != http.StatusSwitchingProtocols {
-		// Upgrade failed — read body and send back
+		// Upgrade failed
+		a.verbose("WS_UPGRADE_FAILED %s → %d", frame.Path, statusCode)
 		body, _ := io.ReadAll(respReader)
 		if len(body) > 0 {
 			_ = a.conn.Send(protocol.Frame{
@@ -519,7 +547,8 @@ func (a *App) startWebSocketTunnel(frame protocol.Frame) error {
 		return nil
 	}
 
-	// WebSocket upgrade successful — tunnel bidirectionally
+	// WebSocket upgrade successful
+	a.verbose("WS_UPGRADE_OK %s → 101 Switching Protocols", frame.Path)
 	tunnel := &wsTunnel{ID: frame.ID, conn: destConn}
 	wsTunnels.Store(frame.ID, tunnel)
 
@@ -527,18 +556,21 @@ func (a *App) startWebSocketTunnel(frame protocol.Frame) error {
 	wg.Add(2)
 
 	// Destination -> Tunnel server
+	var destToServerBytes int64
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := respReader.Read(buf)
 			if err != nil {
+				a.verbose("WS_DEST_CLOSED %s → sent %s to server", frame.Path, formatBytes(destToServerBytes))
 				_ = a.conn.Send(protocol.Frame{
 					Type: protocol.FrameTypeWebSocketClose,
 					ID:   frame.ID,
 				})
 				return
 			}
+			destToServerBytes += int64(n)
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 			if err := a.conn.Send(protocol.Frame{
@@ -547,6 +579,7 @@ func (a *App) startWebSocketTunnel(frame protocol.Frame) error {
 				Chunk:     chunk,
 				Timestamp: time.Now().UTC(),
 			}); err != nil {
+				a.verbose("WS_SEND_ERR %s: %v", frame.Path, err)
 				return
 			}
 		}
@@ -606,6 +639,16 @@ func (a *App) sendWebSocketError(requestID string, err error) {
 		Error:     err.Error(),
 		Timestamp: time.Now().UTC(),
 	})
+}
+
+func formatBytes(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	} else {
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	}
 }
 
 func (a *App) closePendingRequests(err error) {
