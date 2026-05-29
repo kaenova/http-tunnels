@@ -8,10 +8,15 @@ on:
       - Dockerfile
       - .github/workflows/server.yaml
       - cmd/server/**
+      - internal/server/**
+      - internal/protocol/**
+      - internal/client/**
+      - go.mod
+      - go.sum
+      - http_tunnels.go
 env:
   TAGS: ${{ github.sha }}
 
-  # Please fill this
   DOCKER_REPOSITORY: kaenova/tunnel
 
 jobs:
