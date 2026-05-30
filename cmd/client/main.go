@@ -3,20 +3,71 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/kaenova/http-tunnels/internal/tunnel"
 )
 
 func main() {
-	tunnelAddr := getEnv("TUNNEL_ADDR", "127.0.0.1:50051")
-	destAddr := getEnv("DEST_ADDR", "http://127.0.0.1:5000")
+	host := flag.String("host", "https://t.kaenova.my.id", "Public tunnel host address")
+	subdomain := flag.String("subdomain", "", "Subdomain to use for the tunnel (unused in H2 mode)")
+	verbose := flag.Bool("verbose", false, "Enable verbose request/response logging")
+	_ = subdomain
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Println(`http-tunnels - a simple HTTP tunnel client
+Github : https://github.com/kaenova/http-tunnels
+
+Usage:
+  http-tunnels [options] <destination_server>
+  http-tunnels update
+
+Options:
+  -host string
+        Public tunnel host address (default "https://t.kaenova.my.id" or TUNNEL_HOST env var)
+  -subdomain string
+        Subdomain to use for the tunnel
+  -verbose
+        Enable verbose request/response logging`)
+		os.Exit(1)
+	}
+
+	destAddr := flag.Arg(0)
+
+	// Parse host to extract tunnel server address
+	hostURL, err := url.Parse(*host)
+	if err != nil {
+		log.Fatalf("invalid host: %v", err)
+	}
+
+	tunnelHost := hostURL.Host
+	if !strings.Contains(tunnelHost, ":") {
+		if hostURL.Scheme == "https" {
+			tunnelHost = tunnelHost + ":443"
+		} else {
+			tunnelHost = tunnelHost + ":80"
+		}
+	}
+
+	// For HTTP/2 tunnel, we connect to port 50051 by default
+	// (tunnel server listens on 50051 for H2 connections)
+	tunnelAddr := tunnelHost
+	if strings.HasSuffix(tunnelAddr, ":443") || strings.HasSuffix(tunnelAddr, ":80") {
+		// Replace port with tunnel port
+		parts := strings.Split(tunnelAddr, ":")
+		tunnelAddr = parts[0] + ":50051"
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -29,10 +80,13 @@ func main() {
 	}
 	log.Printf("Connected to tunnel server at %s", tunnelAddr)
 
-	// Handle incoming requests from the tunnel
+	// Handle incoming requests
 	go func() {
 		for req := range session.IncomingRequests() {
-			handleRequest(ctx, req, destAddr, session)
+			if *verbose {
+				log.Printf("[verbose] REQUEST %s %s", req.Header.Method, req.Header.Path)
+			}
+			handleRequest(ctx, req, destAddr, session, *verbose)
 		}
 	}()
 
@@ -46,7 +100,7 @@ func main() {
 	session.Close()
 }
 
-func handleRequest(ctx context.Context, req *tunnel.IncomingRequest, destAddr string, sess *tunnel.Session) {
+func handleRequest(ctx context.Context, req *tunnel.IncomingRequest, destAddr string, sess *tunnel.Session, verbose bool) {
 	url := destAddr + req.Header.Path
 
 	httpReq, err := http.NewRequest(req.Header.Method, url, bytes.NewReader(req.Body))
@@ -87,11 +141,11 @@ func handleRequest(ctx context.Context, req *tunnel.IncomingRequest, destAddr st
 		Status:  resp.StatusCode,
 		Headers: respHeaders,
 	}, body)
+
+	if verbose {
+		log.Printf("[verbose] RESPONSE %s %s → %d (%d bytes)", req.Header.Method, req.Header.Path, resp.StatusCode, len(body))
+	}
 }
 
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
+// Ensure net is used
+var _ = net.Listen
