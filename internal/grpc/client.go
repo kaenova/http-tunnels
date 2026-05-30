@@ -24,6 +24,7 @@ type Client struct {
 	backendHost string
 	backendPort int32
 	connections map[string]net.Conn
+	queuedData  map[string][][]byte
 	connMu      sync.Mutex
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -64,7 +65,6 @@ func (c *Client) Connect(addr string, useTLS bool, subdomain, backendHost string
 	}
 	c.stream = stream
 
-	// Send register request
 	err = stream.Send(&pb.TunnelMessage{
 		Payload: &pb.TunnelMessage_Register{
 			Register: &pb.RegisterRequest{
@@ -79,7 +79,6 @@ func (c *Client) Connect(addr string, useTLS bool, subdomain, backendHost string
 		return fmt.Errorf("sending register: %w", err)
 	}
 
-	// Wait for ack
 	msg, err := stream.Recv()
 	if err != nil {
 		conn.Close()
@@ -128,6 +127,8 @@ func (c *Client) handleTcpOpen(open *pb.TcpOpen) {
 	connID := open.ConnectionId
 	addr := fmt.Sprintf("%s:%d", c.backendHost, c.backendPort)
 
+	log.Printf("TcpOpen received: conn=%s backend=%s", connID, addr)
+
 	backend, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
 		log.Printf("backend dial error (conn=%s): %v", connID, err)
@@ -135,12 +136,46 @@ func (c *Client) handleTcpOpen(open *pb.TcpOpen) {
 		return
 	}
 
+	log.Printf("Backend connected: conn=%s", connID)
+
 	c.connMu.Lock()
 	c.connections[connID] = backend
+	if c.queuedData != nil {
+		if queued, ok := c.queuedData[connID]; ok {
+			log.Printf("Flushing %d queued chunks for conn=%s", len(queued), connID)
+			for _, data := range queued {
+				backend.Write(data)
+			}
+			delete(c.queuedData, connID)
+		}
+	}
 	c.connMu.Unlock()
 
-	// Start reading from backend and sending to server
 	go c.forwardBackendToServer(connID, backend)
+}
+
+func (c *Client) handleTcpData(data *pb.TcpData) {
+	c.connMu.Lock()
+	conn, ok := c.connections[data.ConnectionId]
+	if !ok {
+		if c.queuedData == nil {
+			c.queuedData = make(map[string][][]byte)
+		}
+		c.queuedData[data.ConnectionId] = append(c.queuedData[data.ConnectionId], data.Data)
+		log.Printf("Queued %d bytes for conn=%s", len(data.Data), data.ConnectionId)
+		c.connMu.Unlock()
+		return
+	}
+	c.connMu.Unlock()
+
+	if conn != nil {
+		n, err := conn.Write(data.Data)
+		if err != nil {
+			log.Printf("Write error conn=%s: %v", data.ConnectionId, err)
+		} else {
+			log.Printf("Wrote %d bytes to backend conn=%s", n, data.ConnectionId)
+		}
+	}
 }
 
 func (c *Client) forwardBackendToServer(connID string, backend net.Conn) {
@@ -170,7 +205,6 @@ func (c *Client) forwardBackendToServer(connID string, backend net.Conn) {
 			return
 		}
 
-		// Copy data to avoid race
 		data := make([]byte, n)
 		copy(data, buf[:n])
 
@@ -185,16 +219,6 @@ func (c *Client) forwardBackendToServer(connID string, backend net.Conn) {
 		if err != nil {
 			return
 		}
-	}
-}
-
-func (c *Client) handleTcpData(data *pb.TcpData) {
-	c.connMu.Lock()
-	conn, ok := c.connections[data.ConnectionId]
-	c.connMu.Unlock()
-
-	if ok && conn != nil {
-		conn.Write(data.Data)
 	}
 }
 
@@ -254,5 +278,4 @@ func isNetTimeout(err error) bool {
 	return false
 }
 
-// Ensure imports
 var _ = time.Second

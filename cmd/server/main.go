@@ -14,18 +14,16 @@ import (
 
 	"github.com/kaenova/http-tunnels/internal/admin"
 	"github.com/kaenova/http-tunnels/internal/grpc"
-	"github.com/kaenova/http-tunnels/internal/tcp"
+	httpr "github.com/kaenova/http-tunnels/internal/http"
 	itls "github.com/kaenova/http-tunnels/internal/tls"
 )
 
 func main() {
 	grpcPort := getEnvInt("GRPC_PORT", 8443)
 	httpPort := getEnvInt("HTTP_PORT", 8080)
-	adminPort := getEnvInt("ADMIN_PORT", 8090)
 
 	grpcAddr := fmt.Sprintf(":%d", grpcPort)
 	httpAddr := fmt.Sprintf(":%d", httpPort)
-	adminAddr := fmt.Sprintf(":%d", adminPort)
 
 	samePort := grpcPort == httpPort
 
@@ -41,18 +39,27 @@ func main() {
 
 	tunnelServer := grpc.NewServer()
 
+	// Admin handler
+	adminServer := admin.NewServer(tunnelServer)
+	adminMux := adminServer.Handler().(*http.ServeMux)
+
+	// Serve admin web static files if they exist
+	if _, err := os.Stat("cmd/server/web/dist"); err == nil {
+		adminMux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServer(http.Dir("cmd/server/web/dist"))))
+	}
+
 	if samePort {
-		// Single-port mode: accept all connections ourselves, detect gRPC vs TCP
+		// Single-port mode: gRPC and HTTP share the same TLS port
 		tlsListener, err := tls.Listen("tcp", grpcAddr, serverTLS)
 		if err != nil {
 			log.Fatalf("TLS listen: %v", err)
 		}
 
-		// Create a connection router
-		grpcConnChan := make(chan net.Conn, 100)
-		tcpConnChan := make(chan net.Conn, 100)
+		// Channels for routing
+		grpcChan := make(chan net.Conn, 100)
+		httpChan := make(chan net.Conn, 100)
 
-		// Accept loop: detect gRPC vs TCP and route
+		// Accept loop: detect gRPC vs HTTP and route
 		go func() {
 			for {
 				conn, err := tlsListener.Accept()
@@ -65,7 +72,6 @@ func main() {
 				}
 
 				go func() {
-					// Peek at first bytes to detect gRPC
 					peeked := bufio.NewReader(conn)
 					header, err := peeked.Peek(5)
 					if err != nil {
@@ -73,28 +79,29 @@ func main() {
 						return
 					}
 
-					isGRPC := string(header) == "PRI *"
-					if isGRPC {
-						grpcConnChan <- &bufferedConn{Conn: conn, reader: peeked}
+					if string(header) == "PRI *" {
+						grpcChan <- &bufferedConn{Conn: conn, reader: peeked}
 					} else {
-						tcpConnChan <- &bufferedConn{Conn: conn, reader: peeked}
+						httpChan <- &bufferedConn{Conn: conn, reader: peeked}
 					}
 				}()
 			}
 		}()
 
-		// Start gRPC server on the grpc connection channel
+		// Start gRPC server
 		go func() {
 			log.Printf("gRPC server sharing port %d", grpcPort)
-			grpc.StartGRPCServerOnChan(grpcConnChan, serverTLS, tunnelServer)
+			grpc.StartGRPCServerOnChan(grpcChan, tunnelServer)
 		}()
 
-		// Start TCP forwarder on the tcp connection channel
-		forwarder := tcp.NewForwarder(tunnelServer)
+		// Start HTTP router
+		router := httpr.NewRouter(tunnelServer, adminMux)
 		go func() {
-			log.Printf("TCP forwarder sharing port %d with gRPC", grpcPort)
-			forwarder.ServeChan(tcpConnChan)
+			log.Printf("HTTP router sharing port %d with gRPC", grpcPort)
+			router.ServeChan(httpChan)
 		}()
+
+		log.Printf("Server started. Single port mode: gRPC+HTTP on :%d", grpcPort)
 	} else {
 		// Separate ports mode
 		_, _, err = grpc.StartGRPCServer(grpcAddr, serverTLS, tunnelServer)
@@ -107,34 +114,15 @@ func main() {
 			log.Fatalf("HTTP listen: %v", err)
 		}
 
-		forwarder := tcp.NewForwarder(tunnelServer)
+		router := httpr.NewRouter(tunnelServer, adminMux)
 		go func() {
-			log.Printf("TCP forwarder listening on %s", httpAddr)
-			if err := forwarder.Serve(httpListener); err != nil {
-				log.Printf("TCP forwarder error: %v", err)
+			log.Printf("HTTP router listening on %s (admin + tunnel proxy)", httpAddr)
+			if err := router.Serve(httpListener); err != nil {
+				log.Printf("HTTP router error: %v", err)
 			}
 		}()
-	}
 
-	// Admin API
-	adminServer := admin.NewServer(tunnelServer)
-	adminMux := adminServer.Handler().(*http.ServeMux)
-
-	if _, err := os.Stat("cmd/server/web/dist"); err == nil {
-		adminMux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServer(http.Dir("cmd/server/web/dist"))))
-	}
-
-	go func() {
-		log.Printf("Admin API listening on %s", adminAddr)
-		if err := http.ListenAndServe(adminAddr, adminMux); err != nil {
-			log.Printf("Admin server error: %v", err)
-		}
-	}()
-
-	if samePort {
-		log.Printf("Server started. Single port mode: gRPC+TCP on :%d, Admin on :%d", grpcPort, adminPort)
-	} else {
-		log.Printf("Server started. gRPC on :%d, TCP on :%d, Admin on :%d", grpcPort, httpPort, adminPort)
+		log.Printf("Server started. gRPC on :%d, HTTP on :%d", grpcPort, httpPort)
 	}
 
 	sig := make(chan os.Signal, 1)

@@ -308,7 +308,7 @@ func StartGRPCServerOnListener(lis net.Listener, tunnelServer *Server) {
 
 // StartGRPCServerOnChan starts the gRPC server accepting connections from a channel
 // The connections are already TLS-wrapped, so we use insecure creds
-func StartGRPCServerOnChan(connChan chan net.Conn, tlsConfig *tls.Config, tunnelServer *Server) {
+func StartGRPCServerOnChan(connChan chan net.Conn, tunnelServer *Server) {
 	grpcServer := ggrpc.NewServer()
 	pb.RegisterTunnelServiceServer(grpcServer, tunnelServer)
 
