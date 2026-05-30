@@ -320,6 +320,7 @@ func (a *App) executeRequest(ctx context.Context, request *inboundRequest, bodyR
 	defer request.Cancel()
 	defer bodyReader.Close()
 	defer a.verbose("REQUEST_END %s %s (id=%s)", request.Method, request.Path, request.ID[:8])
+	defer a.conn.RemoveStream(request.ID)
 
 	startTime := time.Now()
 

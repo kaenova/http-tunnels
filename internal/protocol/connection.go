@@ -13,16 +13,19 @@ var ErrConnectionClosed = errors.New("protocol connection closed")
 
 type Connection struct {
 	conn      *websocket.Conn
-	send      chan Frame
+	control   chan Frame
 	closed    chan struct{}
 	closeOnce sync.Once
+	mu        sync.Mutex
+	streams   map[string]chan Frame
 }
 
 func NewConnection(conn *websocket.Conn) *Connection {
 	c := &Connection{
-		conn:   conn,
-		send:   make(chan Frame, 1024),
-		closed: make(chan struct{}),
+		conn:    conn,
+		control: make(chan Frame, 256),
+		closed:  make(chan struct{}),
+		streams: make(map[string]chan Frame),
 	}
 
 	_ = conn.SetReadDeadline(time.Now().Add(DefaultPongWait))
@@ -42,11 +45,53 @@ func (c *Connection) Send(frame Frame) error {
 	default:
 	}
 
+	// Data frames go to per-stream buffer, control frames go to control channel
+	switch frame.Type {
+	case FrameTypeResponseBody, FrameTypeRequestBody, FrameTypeWebSocketData:
+		return c.sendToStream(frame)
+	default:
+		return c.sendControl(frame)
+	}
+}
+
+func (c *Connection) sendControl(frame Frame) error {
 	select {
-	case c.send <- frame:
+	case c.control <- frame:
 		return nil
 	case <-c.closed:
 		return ErrConnectionClosed
+	}
+}
+
+func (c *Connection) sendToStream(frame Frame) error {
+	c.mu.Lock()
+	buf, ok := c.streams[frame.ID]
+	if !ok {
+		buf = make(chan Frame, 64)
+		c.streams[frame.ID] = buf
+	}
+	c.mu.Unlock()
+
+	select {
+	case buf <- frame:
+		return nil
+	default:
+		// Buffer full — non-blocking, try to send anyway
+		select {
+		case buf <- frame:
+			return nil
+		case <-c.closed:
+			return ErrConnectionClosed
+		}
+	}
+}
+
+func (c *Connection) RemoveStream(streamID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if buf, ok := c.streams[streamID]; ok {
+		close(buf)
+		delete(c.streams, streamID)
 	}
 }
 
@@ -90,9 +135,12 @@ func (c *Connection) writeLoop() {
 	ticker := time.NewTicker(DefaultPingPeriod)
 	defer ticker.Stop()
 
+	// Collect stream IDs for round-robin polling
+	streamIDs := make([]string, 0, 64)
+
 	for {
 		select {
-		case frame := <-c.send:
+		case frame := <-c.control:
 			if err := c.writeJSON(frame); err != nil {
 				_ = c.Close()
 				return
@@ -104,6 +152,42 @@ func (c *Connection) writeLoop() {
 			}
 		case <-c.closed:
 			return
+		}
+
+		// Non-blocking: drain available data frames from streams
+		// between control frames
+		c.mu.Lock()
+		streamIDs = streamIDs[:0]
+		for id := range c.streams {
+			streamIDs = append(streamIDs, id)
+		}
+		c.mu.Unlock()
+
+		for _, id := range streamIDs {
+			c.mu.Lock()
+			buf, ok := c.streams[id]
+			c.mu.Unlock()
+			if !ok {
+				continue
+			}
+
+			// Drain up to 4 frames from this stream
+			for i := 0; i < 4; i++ {
+				select {
+				case frame, ok := <-buf:
+					if !ok {
+						// Stream removed
+						goto nextStream
+					}
+					if err := c.writeJSON(frame); err != nil {
+						_ = c.Close()
+						return
+					}
+				default:
+					goto nextStream
+				}
+			}
+		nextStream:
 		}
 	}
 }

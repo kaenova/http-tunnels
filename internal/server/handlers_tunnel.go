@@ -205,6 +205,7 @@ func (a *App) handleTunnelWebSocketUpgrade(session *TunnelSession, requestID str
 	stream := newResponseStream()
 	session.RegisterPending(requestID, stream)
 	defer session.RemovePending(requestID)
+	defer session.Conn.RemoveStream(requestID)
 
 	var startFrame protocol.Frame
 	select {
@@ -375,6 +376,7 @@ func (a *App) handleTunnelHTTP(session *TunnelSession, w http.ResponseWriter, r 
 	stream := newResponseStream()
 	session.RegisterPending(requestID, stream)
 	defer session.RemovePending(requestID)
+	defer session.Conn.RemoveStream(requestID)
 
 	cancelOnce := sync.Once{}
 	sendCancel := func() {
