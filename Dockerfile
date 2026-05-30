@@ -11,7 +11,7 @@ COPY cmd/server/web ./
 RUN bun run build
 
 # Stage 2: Build the Go application
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 ARG VERSION=dev
 
