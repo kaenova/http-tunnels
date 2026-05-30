@@ -14,7 +14,6 @@ on:
       - go.mod
       - go.sum
       - http_tunnels.go
-  push:
     tags:
       - 'v*.*.*'
 
