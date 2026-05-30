@@ -17,7 +17,7 @@ ARG VERSION=dev
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 
-RUN apk add --no-cache git
+RUN apk add --no-cache git protoc protobuf-dev
 
 WORKDIR /app
 
@@ -27,23 +27,28 @@ RUN go mod download
 COPY . .
 COPY --from=web-builder /app/cmd/server/web/dist ./cmd/server/web/dist
 
-RUN go build -o main -ldflags "-s -w -X main.Version=${VERSION}" ./cmd/server
+# Generate protobuf
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest && \
+    PATH="$PATH:/root/go/bin" protoc --go_out=. --go_opt=paths=source_relative \
+      --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/tunnel.proto
+
+RUN go build -o http-tunnels-server -ldflags "-s -w -X main.Version=${VERSION}" ./cmd/server && \
+    go build -o http-tunnels -ldflags "-s -w -X main.Version=${VERSION}" ./cmd/client
 
 # Stage 3: Create a lightweight runtime image
 FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates && mkdir -p /data
 
-ENV LISTEN_ADDR=:8443 \
-    TLS_CERT_DIR=/data/tls \
-    DB_PATH=/data/http-tunnels.db
-
 WORKDIR /root/
 
-COPY --from=builder /app/main ./main
+COPY --from=builder /app/http-tunnels-server ./
+COPY --from=builder /app/http-tunnels ./
+COPY --from=builder /app/cmd/server/web/dist ./cmd/server/web/dist
 
 VOLUME ["/data"]
 
-EXPOSE 8443
+EXPOSE 8443 8080
 
-CMD ["./main"]
+CMD ["./http-tunnels-server"]
