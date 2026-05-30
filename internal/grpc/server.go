@@ -292,5 +292,57 @@ func StartGRPCServer(addr string, tlsConfig *tls.Config, tunnelServer *Server) (
 	return grpcServer, lis, nil
 }
 
+// StartGRPCServerOnListener starts the gRPC server on an existing listener
+func StartGRPCServerOnListener(lis net.Listener, tunnelServer *Server) {
+	// We need TLS config for gRPC creds, but the listener already does TLS
+	// Use insecure creds since TLS is handled by the listener
+	grpcServer := ggrpc.NewServer()
+	pb.RegisterTunnelServiceServer(grpcServer, tunnelServer)
+
+	go func() {
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Printf("gRPC server error: %v", err)
+		}
+	}()
+}
+
+// StartGRPCServerOnChan starts the gRPC server accepting connections from a channel
+// The connections are already TLS-wrapped, so we use insecure creds
+func StartGRPCServerOnChan(connChan chan net.Conn, tlsConfig *tls.Config, tunnelServer *Server) {
+	grpcServer := ggrpc.NewServer()
+	pb.RegisterTunnelServiceServer(grpcServer, tunnelServer)
+
+	lis := &chanListener{
+		connChan: connChan,
+		addr:     &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8443},
+	}
+
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Printf("gRPC server error: %v", err)
+	}
+}
+
+// chanListener implements net.Listener using a channel of connections
+type chanListener struct {
+	connChan chan net.Conn
+	addr     net.Addr
+}
+
+func (l *chanListener) Accept() (net.Conn, error) {
+	conn, ok := <-l.connChan
+	if !ok {
+		return nil, fmt.Errorf("listener closed")
+	}
+	return conn, nil
+}
+
+func (l *chanListener) Close() error {
+	return nil
+}
+
+func (l *chanListener) Addr() net.Addr {
+	return l.addr
+}
+
 // Ensure imports
 var _ = time.Second

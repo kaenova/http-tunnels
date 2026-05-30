@@ -40,6 +40,13 @@ func (f *Forwarder) Serve(lis net.Listener) error {
 	}
 }
 
+// ServeChan accepts TCP connections from a channel
+func (f *Forwarder) ServeChan(connChan chan net.Conn) {
+	for conn := range connChan {
+		go f.handleConn(conn)
+	}
+}
+
 func (f *Forwarder) handleConn(conn net.Conn) {
 	defer conn.Close()
 
