@@ -18,10 +18,10 @@ const (
 )
 
 func (a *App) authenticatePassword(password string) bool {
-	if a.config.WebPassword == "" {
+	if a.Config.WebPassword == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(password)), []byte(a.config.WebPassword)) == 1
+	return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(password)), []byte(a.Config.WebPassword)) == 1
 }
 
 func (a *App) setAdminSession(w http.ResponseWriter) error {
@@ -35,7 +35,7 @@ func (a *App) setAdminSession(w http.ResponseWriter) error {
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   a.config.CookieSecure,
+		Secure:   a.Config.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(expiresAt, 0),
 		MaxAge:   int(adminSessionTTL.Seconds()),
@@ -49,7 +49,7 @@ func (a *App) clearAdminSession(w http.ResponseWriter) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   a.config.CookieSecure,
+		Secure:   a.Config.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
@@ -84,7 +84,7 @@ func (a *App) isAdminAuthenticated(r *http.Request) bool {
 }
 
 func (a *App) signSession(payload string) string {
-	mac := hmac.New(sha256.New, []byte(a.config.SessionSecret))
+	mac := hmac.New(sha256.New, []byte(a.Config.SessionSecret))
 	_, _ = mac.Write([]byte(payload))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
@@ -100,7 +100,7 @@ func (a *App) requireAdminAPI(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (a *App) ensureAdminConfigured() error {
-	if err := a.config.ValidateAdminConfiguration(); err != nil {
+	if err := a.Config.ValidateAdminConfiguration(); err != nil {
 		return fmt.Errorf("admin authentication is unavailable: %w", err)
 	}
 	return nil

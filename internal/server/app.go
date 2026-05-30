@@ -18,7 +18,7 @@ import (
 )
 
 type App struct {
-	config       Config
+	Config       Config
 	store        *Store
 	assets       fs.FS
 	assetHandler http.Handler
@@ -32,7 +32,7 @@ func NewApp(config Config, assets fs.FS) (*App, error) {
 	}
 
 	app := &App{
-		config: config,
+		Config: config,
 		store:  store,
 		assets: assets,
 	}
@@ -48,11 +48,11 @@ func (a *App) Close() error {
 
 func (a *App) Run() error {
 	server := &http.Server{
-		Addr:              a.config.ListenAddr,
+		Addr:              a.Config.ListenAddr,
 		Handler:           a,
 		ReadHeaderTimeout: 15 * time.Second,
 	}
-	log.Printf("Listening on %s", a.config.ListenAddr)
+	log.Printf("Listening on %s", a.Config.ListenAddr)
 	return server.ListenAndServe()
 }
 
@@ -206,7 +206,7 @@ func (a *App) logError(context string, err error) {
 }
 
 func (a *App) verbose(format string, v ...any) {
-	if a.config.Verbose {
+	if a.Config.Verbose {
 		log.Printf("[verbose] "+format, v...)
 	}
 }

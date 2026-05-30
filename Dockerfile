@@ -13,6 +13,8 @@ RUN bun run build
 # Stage 2: Build the Go application
 FROM golang:1.23-alpine AS builder
 
+ARG VERSION=dev
+
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 
 RUN apk add --no-cache git
@@ -25,7 +27,7 @@ RUN go mod download
 COPY . .
 COPY --from=web-builder /app/cmd/server/web/dist ./cmd/server/web/dist
 
-RUN go build -o main -ldflags "-s -w" ./cmd/server
+RUN go build -o main -ldflags "-s -w -X main.Version=${VERSION}" ./cmd/server
 
 # Stage 3: Create a lightweight runtime image
 FROM alpine:latest

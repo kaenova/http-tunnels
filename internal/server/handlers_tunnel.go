@@ -113,8 +113,8 @@ func (a *App) handleNewTunnel(w http.ResponseWriter, r *http.Request) {
 		"domain":     record.Domain,
 		"domain_key": domainKey,
 	}
-	if a.config.ServerMessage != "" {
-		response["server_message"] = a.config.ServerMessage
+	if a.Config.ServerMessage != "" {
+		response["server_message"] = a.Config.ServerMessage
 	}
 
 	log.Printf("New domain registered: %s", record.Domain)
