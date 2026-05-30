@@ -1,0 +1,55 @@
+syntax = "proto3";
+package tunnel;
+
+option go_package = "github.com/kaenova/http-tunnels/internal/grpc";
+
+service TunnelService {
+  // Bidirectional tunnel stream
+  rpc Tunnel(stream TunnelMessage) returns (stream TunnelMessage);
+}
+
+message TunnelMessage {
+  oneof payload {
+    // Registration
+    RegisterRequest register = 1;
+    RegisterResponse register_ack = 2;
+    
+    // TCP stream control
+    TcpOpen open = 10;
+    TcpData data = 11;
+    TcpClose close = 12;
+    
+    // Health check
+    Ping ping = 30;
+    Pong pong = 31;
+  }
+}
+
+message RegisterRequest {
+  string subdomain = 1;
+  string backend_host = 2;
+  int32 backend_port = 3;
+}
+
+message RegisterResponse {
+  string assigned_subdomain = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+message TcpOpen {
+  string connection_id = 1;
+}
+
+message TcpData {
+  string connection_id = 1;
+  bytes data = 2;
+}
+
+message TcpClose {
+  string connection_id = 1;
+  optional string error = 2;
+}
+
+message Ping {}
+message Pong {}
