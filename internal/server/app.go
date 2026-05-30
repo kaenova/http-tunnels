@@ -205,6 +205,12 @@ func (a *App) logError(context string, err error) {
 	log.Printf("%s: %v", context, err)
 }
 
+func (a *App) verbose(format string, v ...any) {
+	if a.config.Verbose {
+		log.Printf("[verbose] "+format, v...)
+	}
+}
+
 func httpStatusForError(err error) int {
 	if err == nil {
 		return http.StatusOK
@@ -220,4 +226,14 @@ func formatAdminConfigurationError(err error) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", err)
+}
+
+func formatBytes(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	} else {
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	}
 }

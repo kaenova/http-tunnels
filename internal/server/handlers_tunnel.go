@@ -179,6 +179,7 @@ func (a *App) handleTunnelWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleTunnelWebSocketUpgrade(session *TunnelSession, requestID string, w http.ResponseWriter, r *http.Request, logEntry RequestResponseLog) {
 	startedAt := time.Now().UTC()
+	a.verbose("WS_UPGRADE_START %s %s (id=%s)", r.Method, buildRequestPath(r), requestID[:8])
 
 	// Hijack the connection to tunnel WebSocket frames bidirectionally
 	hijacker, ok := w.(http.Hijacker)
@@ -229,6 +230,7 @@ func (a *App) handleTunnelWebSocketUpgrade(session *TunnelSession, requestID str
 	}
 
 	// Upgrade successful — hijack and tunnel raw bytes
+	a.verbose("WS_UPGRADE_OK %s %s → 101 Switching Protocols", r.Method, buildRequestPath(r))
 	clientConn, bufReadWriter, err := hijacker.Hijack()
 	if err != nil {
 		_ = session.Send(protocol.Frame{
@@ -258,18 +260,21 @@ func (a *App) handleTunnelWebSocketUpgrade(session *TunnelSession, requestID str
 	wg.Add(2)
 
 	// Client -> Tunnel
+	var clientToServerBytes int64
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := clientConn.Read(buf)
 			if err != nil {
+				a.verbose("WS_CLIENT_CLOSED %s → sent %s to client", buildRequestPath(r), formatBytes(clientToServerBytes))
 				_ = session.Send(protocol.Frame{
 					Type: protocol.FrameTypeWebSocketClose,
 					ID:   requestID,
 				})
 				return
 			}
+			clientToServerBytes += int64(n)
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 			if err := session.Send(protocol.Frame{
@@ -278,6 +283,7 @@ func (a *App) handleTunnelWebSocketUpgrade(session *TunnelSession, requestID str
 				Chunk:     chunk,
 				Timestamp: time.Now().UTC(),
 			}); err != nil {
+				a.verbose("WS_SEND_ERR %s: %v", buildRequestPath(r), err)
 				return
 			}
 		}
@@ -326,8 +332,11 @@ func (a *App) handleTunnelHTTP(session *TunnelSession, w http.ResponseWriter, r 
 		StartedAt:          startedAt,
 	}
 
+	a.verbose("REQ %s %s (remote=%s, id=%s)", r.Method, requestPath, r.RemoteAddr, requestID[:8])
+
 	// Check for WebSocket upgrade
 	if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
+		a.verbose("WS_UPGRADE %s %s", r.Method, requestPath)
 		a.handleTunnelWebSocketUpgrade(session, requestID, w, r, logEntry)
 		return
 	}
@@ -356,6 +365,11 @@ func (a *App) handleTunnelHTTP(session *TunnelSession, w http.ResponseWriter, r 
 		if err := a.store.RecordRequestLog(context.Background(), logEntry); err != nil {
 			a.logError("recording request log", err)
 		}
+		a.verbose("DONE %s %s → %d (%dms, %s req/%s resp)",
+			r.Method, requestPath, statusCode,
+			logEntry.DurationMs,
+			formatBytes(logEntry.RequestBytes),
+			formatBytes(logEntry.ResponseBytes))
 	}()
 
 	stream := newResponseStream()

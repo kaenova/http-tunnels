@@ -13,6 +13,7 @@ type Config struct {
 	WebPassword   string
 	SessionSecret string
 	CookieSecure  bool
+	Verbose       bool
 }
 
 func LoadConfig() Config {
@@ -36,6 +37,11 @@ func LoadConfig() Config {
 		sessionSecret = strings.TrimSpace(os.Getenv("WEB_PASSWORD"))
 	}
 
+	verbose := false
+	if value := strings.TrimSpace(strings.ToLower(os.Getenv("VERBOSE"))); value == "1" || value == "true" || value == "yes" {
+		verbose = true
+	}
+
 	return Config{
 		ListenAddr:    listenAddr,
 		DBPath:        dbPath,
@@ -43,6 +49,7 @@ func LoadConfig() Config {
 		WebPassword:   strings.TrimSpace(os.Getenv("WEB_PASSWORD")),
 		SessionSecret: sessionSecret,
 		CookieSecure:  cookieSecure,
+		Verbose:       verbose,
 	}
 }
 
