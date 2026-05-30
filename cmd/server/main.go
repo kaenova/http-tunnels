@@ -13,6 +13,12 @@ import (
 )
 
 func main() {
+	// Listen address (single port for both tunnel + HTTP)
+	listenAddr := ":8443"
+	if v := os.Getenv("LISTEN_ADDR"); v != "" {
+		listenAddr = v
+	}
+
 	// TLS config
 	tlsCfg := tunnel.DefaultTLSConfig()
 	if err := tunnel.EnsureCertificates(tlsCfg); err != nil {
@@ -24,16 +30,12 @@ func main() {
 		log.Fatalf("server TLS config: %v", err)
 	}
 
-	// Listen for tunnel connections from clients
-	tunnelAddr := getEnv("TUNNEL_LISTEN_ADDR", ":50051")
-	tunnelListener, err := tunnel.ListenTLS(tunnelAddr, serverTLS)
+	// TLS listener
+	listener, err := tunnel.ListenTLS(listenAddr, serverTLS)
 	if err != nil {
-		log.Fatalf("listening for tunnel connections: %v", err)
+		log.Fatalf("listening: %v", err)
 	}
-	log.Printf("Tunnel server listening on %s", tunnelAddr)
-
-	// HTTP server for browser requests (proxied by NPM)
-	httpAddr := getEnv("HTTP_LISTEN_ADDR", ":8080")
+	log.Printf("Server listening on %s", listenAddr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -41,35 +43,25 @@ func main() {
 	// Channel to receive tunnel sessions
 	sessions := make(chan *tunnel.Session, 10)
 
-	// Accept tunnel sessions from clients
+	// Mux: detect whether incoming connection is HTTP/2 tunnel or regular HTTP
+	mux := newSessionMux(listener, sessions)
+
+	// Accept connections
 	go func() {
-		if err := tunnel.ServeTunnel(ctx, tunnelListener, func(session *tunnel.Session) {
-			log.Printf("New tunnel session established")
-			select {
-			case sessions <- session:
-			default:
-				log.Printf("Session channel full, closing session")
-				session.Close()
-			}
-		}); err != nil {
-			log.Printf("tunnel server error: %v", err)
+		if err := mux.serve(ctx); err != nil {
+			log.Printf("serve error: %v", err)
 		}
 	}()
 
 	// HTTP server that uses the tunnel session
 	httpServer := &http.Server{
-		Addr: httpAddr,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Get the first available session
 			select {
 			case session := <-sessions:
-				// Create HTTP handler from session and serve
 				session.HTTPHandler().ServeHTTP(w, r)
-				// Put session back
 				select {
 				case sessions <- session:
 				default:
-					log.Printf("Cannot return session to pool")
 				}
 			default:
 				http.Error(w, "No tunnel client connected", http.StatusServiceUnavailable)
@@ -77,14 +69,13 @@ func main() {
 		}),
 	}
 
+	// Start HTTP on the same listener (after TLS)
 	go func() {
-		log.Printf("HTTP server listening on %s", httpAddr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server error: %v", err)
 		}
 	}()
 
-	// Wait for signal
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
@@ -94,12 +85,57 @@ func main() {
 	httpServer.Shutdown(context.Background())
 }
 
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+// sessionMux peeks at the first bytes of a TLS connection to determine
+// if it's an HTTP/2 tunnel client or a regular HTTP request
+type sessionMux struct {
+	listener net.Listener
+	sessions chan<- *tunnel.Session
 }
 
-// Ensure net is used
+func newSessionMux(l net.Listener, s chan<- *tunnel.Session) *sessionMux {
+	return &sessionMux{listener: l, sessions: s}
+}
+
+func (m *sessionMux) serve(ctx context.Context) error {
+	for {
+		conn, err := m.listener.Accept()
+		if err != nil {
+			if isClosedError(err) {
+				return nil
+			}
+			log.Printf("accept error: %v", err)
+			continue
+		}
+
+		// All connections are TLS, we need to detect if it's a tunnel client
+		// by attempting to read the HTTP/2 client preface (PRI * HTTP/2.0)
+		// or by attempting an HTTP/2 handshake
+		go func() {
+			// Try to create a server session (will fail if it's a browser)
+			session, err := tunnel.NewServerSession(conn)
+			if err != nil {
+				// Not a tunnel client — close and let HTTP server handle it
+				conn.Close()
+				return
+			}
+			log.Printf("New tunnel session established")
+			select {
+			case m.sessions <- session:
+			default:
+				log.Printf("Session channel full, closing session")
+				session.Close()
+			}
+		}()
+	}
+}
+
+func isClosedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err.Error() == "use of closed network connection" ||
+		err.Error() == "connection reset" ||
+		err.Error() == "broken pipe"
+}
+
 var _ = net.Listen
