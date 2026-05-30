@@ -34,9 +34,9 @@ FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates && mkdir -p /data
 
-ENV LISTEN_ADDR=:80 \
-    DB_PATH=/data/http-tunnels.db \
-    COOKIE_SECURE=false
+ENV LISTEN_ADDR=:8443 \
+    TLS_CERT_DIR=/data/tls \
+    DB_PATH=/data/http-tunnels.db
 
 WORKDIR /root/
 
@@ -44,6 +44,6 @@ COPY --from=builder /app/main ./main
 
 VOLUME ["/data"]
 
-EXPOSE 80
+EXPOSE 8443
 
 CMD ["./main"]
