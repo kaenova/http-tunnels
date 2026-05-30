@@ -40,24 +40,12 @@ type ResponseHeader struct {
 	Headers map[string][]string `json:"headers"`
 }
 
-// Session represents a tunnel session between client and server
-type Session struct {
-	mu       sync.Mutex
-	framer   *http2.Framer
-	hpackEnc *hpack.Encoder
-	hpackDec *hpack.Decoder
-	conn     net.Conn
-
-	streamID  uint32
-	closed    chan struct{}
-	closeOnce sync.Once
-
-	// For server side: pending streams waiting for response
-	pending   map[uint32]chan *Response
-	pendingMu sync.Mutex
-
-	// Header buffer for HPACK
-	headerBuf bytes.Buffer
+// IncomingRequest represents a request received from the tunnel
+type IncomingRequest struct {
+	StreamID uint32
+	Header   RequestHeader
+	Body     []byte
+	RespCh   chan *Response
 }
 
 // Response holds the full response from a proxied request
@@ -67,19 +55,69 @@ type Response struct {
 	Body    []byte
 }
 
+// Session represents a tunnel session between client and server
+type Session struct {
+	mu       sync.Mutex
+	framer   *http2.Framer
+	hpackEnc *hpack.Encoder
+	hpackDec *hpack.Decoder
+	conn     net.Conn
+
+	serverStreamID uint32 // even numbers for server-initiated streams
+	clientStreamID uint32 // odd numbers for client-initiated streams (set by server)
+	closed         chan struct{}
+	closeOnce      sync.Once
+
+	// Incoming responses (server side: received from client via handleResponse)
+	incomingResponses   map[uint32]chan *Response
+	incomingResponsesMu sync.Mutex
+
+	// Pending requests waiting for response (server side: created by SendRequest)
+	pendingRequests   map[uint32]chan *Response
+	pendingRequestsMu sync.Mutex
+
+	// Incoming requests (client side: received from server)
+	incoming   chan *IncomingRequest
+	incomingMu sync.Mutex
+
+	// Header buffer for HPACK
+	headerBuf bytes.Buffer
+
+	// Partial data accumulation
+	streamData   map[uint32][]byte
+	streamDataMu sync.Mutex
+	streamEnded  map[uint32]bool
+	streamEndMu  sync.Mutex
+	// Stored response headers for pending streams
+	streamRespStatus  map[uint32]int
+	streamRespHeaders map[uint32]map[string][]string
+	streamRespMu      sync.Mutex
+
+	// Request handler (set by client side)
+	requestHandler func(*IncomingRequest)
+
+	// Temporary storage for HPACK decoding
+	decodeHeadersResult map[string]string
+}
+
 // NewServerSession creates a server-side session (accepts client connection)
 func NewServerSession(conn net.Conn) (*Session, error) {
 	s := &Session{
-		conn:    conn,
-		framer:  http2.NewFramer(conn, conn),
-		closed:  make(chan struct{}),
-		pending: make(map[uint32]chan *Response),
+		conn:        conn,
+		framer:      http2.NewFramer(conn, conn),
+		closed:      make(chan struct{}),
+		incomingResponses: make(map[uint32]chan *Response),
+		pendingRequests:   make(map[uint32]chan *Response),
+		streamData:  make(map[uint32][]byte),
+		streamEnded: make(map[uint32]bool),
+		streamRespStatus:  make(map[uint32]int),
+		streamRespHeaders: make(map[uint32]map[string][]string),
 	}
 
 	s.hpackEnc = hpack.NewEncoder(&s.headerBuf)
-	s.hpackDec = hpack.NewDecoder(4096, func(hf hpack.HeaderField) {})
+	s.hpackDec = hpack.NewDecoder(4096, s.onHeaderField)
 
-	// Read client preface (SETTINGS)
+	// Step 1: Read client preface (SETTINGS)
 	frame, err := s.framer.ReadFrame()
 	if err != nil {
 		return nil, fmt.Errorf("reading client preface: %w", err)
@@ -88,45 +126,48 @@ func NewServerSession(conn net.Conn) (*Session, error) {
 		return nil, fmt.Errorf("expected SETTINGS frame, got %T", frame)
 	}
 
-	// Send server settings
+	// Step 2: Send server SETTINGS (no ACK, just our settings)
 	if err := s.framer.WriteSettings(); err != nil {
 		return nil, fmt.Errorf("writing server settings: %w", err)
 	}
 
-	// Send initial settings ACK
-	s.framer.WriteSettingsAck()
-
-	// Read settings ACK from client
-	for {
-		frame, err := s.framer.ReadFrame()
-		if err != nil {
-			return nil, fmt.Errorf("reading settings ack: %w", err)
-		}
-		if _, ok := frame.(*http2.SettingsFrame); ok {
-			// Another settings frame (with ACK)
-			continue
-		}
-		if _, ok := frame.(*http2.GoAwayFrame); ok {
-			return nil, fmt.Errorf("client sent GOAWAY")
-		}
-		// First non-settings frame should be headers (register)
-		if hf, ok := frame.(*http2.HeadersFrame); ok {
-			return s.handleRegisterFrame(hf)
-		}
+	// Step 3: Read client's SETTINGS ACK
+	ackFrame, err := s.framer.ReadFrame()
+	if err != nil {
+		return nil, fmt.Errorf("reading settings ack: %w", err)
 	}
+	if sf, ok := ackFrame.(*http2.SettingsFrame); !ok || !sf.IsAck() {
+		return nil, fmt.Errorf("expected SETTINGS ACK, got %T", ackFrame)
+	}
+
+	// Step 4: Read client's REGISTER headers
+	regFrame, err := s.framer.ReadFrame()
+	if err != nil {
+		return nil, fmt.Errorf("reading register frame: %w", err)
+	}
+	if hf, ok := regFrame.(*http2.HeadersFrame); ok {
+		return s.handleRegisterFrame(hf)
+	}
+	return nil, fmt.Errorf("expected HEADERS frame for registration, got %T", regFrame)
 }
 
 // NewClientSession creates a client-side session (initiates connection)
 func NewClientSession(ctx context.Context, conn net.Conn) (*Session, error) {
 	s := &Session{
-		conn:    conn,
-		framer:  http2.NewFramer(conn, conn),
-		closed:  make(chan struct{}),
-		pending: make(map[uint32]chan *Response),
+		conn:       conn,
+		framer:     http2.NewFramer(conn, conn),
+		closed:     make(chan struct{}),
+		incomingResponses: make(map[uint32]chan *Response),
+		pendingRequests:   make(map[uint32]chan *Response),
+		incoming:   make(chan *IncomingRequest, 64),
+		streamData:  make(map[uint32][]byte),
+		streamEnded: make(map[uint32]bool),
+		streamRespStatus:  make(map[uint32]int),
+		streamRespHeaders: make(map[uint32]map[string][]string),
 	}
 
 	s.hpackEnc = hpack.NewEncoder(&s.headerBuf)
-	s.hpackDec = hpack.NewDecoder(4096, func(hf hpack.HeaderField) {})
+	s.hpackDec = hpack.NewDecoder(4096, s.onHeaderField)
 
 	// Send client preface
 	if err := s.framer.WriteSettings(); err != nil {
@@ -143,14 +184,16 @@ func NewClientSession(ctx context.Context, conn net.Conn) (*Session, error) {
 	}
 
 	// Send settings ACK
-	s.framer.WriteSettingsAck()
-
-	// Register this client with the server
-	if err := s.register(ctx); err != nil {
-		return nil, fmt.Errorf("registering client: %w", err)
+	if err := s.framer.WriteSettingsAck(); err != nil {
+		return nil, fmt.Errorf("writing settings ack: %w", err)
 	}
 
-	// Start reader goroutine
+	// Register this client
+	if err := s.register(ctx); err != nil {
+		return nil, fmt.Errorf("registering: %w", err)
+	}
+
+	// Start reader
 	go s.readLoop()
 
 	return s, nil
@@ -160,13 +203,13 @@ func (s *Session) register(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	streamID := s.nextStreamID()
+	// Client-initiated stream must be odd
+	streamID := s.nextClientStreamID()
 	s.headerBuf.Reset()
+	s.hpackEnc = hpack.NewEncoder(&s.headerBuf)
 
-	// Register headers
 	s.hpackEnc.WriteField(hpack.HeaderField{Name: ":method", Value: "REGISTER"})
 	s.hpackEnc.WriteField(hpack.HeaderField{Name: ":path", Value: "/tunnel"})
-	s.hpackEnc.WriteField(hpack.HeaderField{Name: "content-type", Value: "application/json"})
 
 	return s.framer.WriteHeaders(http2.HeadersFrameParam{
 		StreamID:      streamID,
@@ -179,8 +222,7 @@ func (s *Session) register(ctx context.Context) error {
 func (s *Session) handleRegisterFrame(hf *http2.HeadersFrame) (*Session, error) {
 	headers := s.decodeHeaders(hf)
 	if headers[":method"] == "REGISTER" {
-		log.Printf("Client registered via tunnel")
-		// Start reader goroutine for this session
+		log.Printf("Client registered via HTTP/2 tunnel")
 		go s.readLoop()
 		return s, nil
 	}
@@ -192,14 +234,13 @@ func (s *Session) SendRequest(ctx context.Context, reqHeader RequestHeader, body
 	s.mu.Lock()
 	streamID := s.nextStreamID()
 	s.headerBuf.Reset()
+	s.hpackEnc = hpack.NewEncoder(&s.headerBuf)
 
-	// Encode request headers
+	// Encode request headers via HPACK
 	s.hpackEnc.WriteField(hpack.HeaderField{Name: ":method", Value: reqHeader.Method})
 	s.hpackEnc.WriteField(hpack.HeaderField{Name: ":path", Value: reqHeader.Path})
-	s.hpackEnc.WriteField(hpack.HeaderField{Name: "content-type", Value: "application/octet-stream"})
-	s.hpackEnc.WriteField(hpack.HeaderField{Name: "x-tunnel-request", Value: "1"})
 
-	// Write optional custom headers
+	// Write custom headers
 	for k, vals := range reqHeader.Headers {
 		for _, v := range vals {
 			s.hpackEnc.WriteField(hpack.HeaderField{Name: strings.ToLower(k), Value: v})
@@ -208,35 +249,45 @@ func (s *Session) SendRequest(ctx context.Context, reqHeader RequestHeader, body
 
 	// Create pending channel
 	respCh := make(chan *Response, 1)
-	s.pendingMu.Lock()
-	s.pending[streamID] = respCh
-	s.pendingMu.Unlock()
+	s.pendingRequestsMu.Lock()
+	s.pendingRequests[streamID] = respCh
+	s.pendingRequestsMu.Unlock()
 	s.mu.Unlock()
+
+	// Determine if there's a body
+	hasBody := body != nil
 
 	// Write HEADERS frame
 	if err := s.framer.WriteHeaders(http2.HeadersFrameParam{
 		StreamID:      streamID,
 		EndHeaders:    true,
-		EndStream:     body == nil,
+		EndStream:     !hasBody,
 		BlockFragment: s.headerBuf.Bytes(),
 	}); err != nil {
+		s.cleanupPending(streamID)
 		return nil, fmt.Errorf("writing headers: %w", err)
 	}
 
 	// Write body if present
-	if body != nil {
+	if hasBody {
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := body.Read(buf)
 			if n > 0 {
-				if err := s.framer.WriteData(streamID, err == io.EOF, buf[:n]); err != nil {
-					return nil, fmt.Errorf("writing body data: %w", err)
+				endStream := err == io.EOF
+				if writeErr := s.framer.WriteData(streamID, endStream, buf[:n]); writeErr != nil {
+					s.cleanupPending(streamID)
+					return nil, fmt.Errorf("writing body data: %w", writeErr)
+				}
+				if endStream {
+					break
 				}
 			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
+				s.cleanupPending(streamID)
 				return nil, fmt.Errorf("reading body: %w", err)
 			}
 		}
@@ -247,22 +298,21 @@ func (s *Session) SendRequest(ctx context.Context, reqHeader RequestHeader, body
 	case resp := <-respCh:
 		return resp, nil
 	case <-ctx.Done():
+		s.cleanupPending(streamID)
 		return nil, ctx.Err()
 	case <-s.closed:
 		return nil, fmt.Errorf("session closed")
 	}
 }
 
-// AcceptRequest waits for the next incoming request from the server
-func (s *Session) AcceptRequest(ctx context.Context) (uint32, *RequestHeader, io.Reader, error) {
-	// This is handled by readLoop and dispatched via callback
-	// For simplicity, we use a channel-based approach
-	select {
-	case <-ctx.Done():
-		return 0, nil, nil, ctx.Err()
-	case <-s.closed:
-		return 0, nil, nil, fmt.Errorf("session closed")
-	}
+// SetRequestHandler sets the handler for incoming requests (client side)
+func (s *Session) SetRequestHandler(handler func(*IncomingRequest)) {
+	s.requestHandler = handler
+}
+
+// IncomingRequests returns the channel of incoming requests (client side)
+func (s *Session) IncomingRequests() <-chan *IncomingRequest {
+	return s.incoming
 }
 
 // SendResponse sends a response back through the tunnel
@@ -271,6 +321,7 @@ func (s *Session) SendResponse(streamID uint32, respHeader ResponseHeader, body 
 	defer s.mu.Unlock()
 
 	s.headerBuf.Reset()
+	s.hpackEnc = hpack.NewEncoder(&s.headerBuf)
 
 	// Encode response headers
 	s.hpackEnc.WriteField(hpack.HeaderField{Name: ":status", Value: fmt.Sprintf("%d", respHeader.Status)})
@@ -310,10 +361,10 @@ func (s *Session) readLoop() {
 		frame, err := s.framer.ReadFrame()
 		if err != nil {
 			if !isClosedError(err) {
-				log.Printf("read frame error: %v", err)
 			}
 			return
 		}
+
 
 		switch f := frame.(type) {
 		case *http2.HeadersFrame:
@@ -323,31 +374,38 @@ func (s *Session) readLoop() {
 		case *http2.RSTStreamFrame:
 			s.handleRSTStream(f)
 		case *http2.GoAwayFrame:
-			log.Printf("received GOAWAY: %v", f)
 			return
 		case *http2.PingFrame:
 			s.handlePing(f)
 		case *http2.SettingsFrame:
-			// Ignore, already handled
 		case *http2.WindowUpdateFrame:
-			// Ignore, we don't do flow control
 		default:
-			log.Printf("unhandled frame type: %T", f)
 		}
+	}
+}
+
+// HPACK header field callback
+func (s *Session) onHeaderField(f hpack.HeaderField) {
+	if s.decodeHeadersResult != nil {
+		s.decodeHeadersResult[f.Name] = f.Value
 	}
 }
 
 func (s *Session) handleHeadersFrame(hf *http2.HeadersFrame) {
 	headers := s.decodeHeaders(hf)
 
-	// Check if this is a response (has :status) or request (has :method)
+	// Check if this is a response (has :status)
 	if status, ok := headers[":status"]; ok {
-		// This is a response
 		s.handleResponse(hf.StreamID, status, headers, hf.StreamEnded())
-	} else if method, ok := headers[":method"]; ok {
-		// This is a request — notify via callback
-		s.handleRequest(hf.StreamID, method, headers, hf.StreamEnded())
+		return
 	}
+
+	// Otherwise it's a request (has :method)
+	if method, ok := headers[":method"]; ok {
+		s.handleRequest(hf.StreamID, method, headers, hf.StreamEnded())
+		return
+	}
+	
 }
 
 func (s *Session) handleResponse(streamID uint32, status string, headers map[string]string, endStream bool) {
@@ -363,6 +421,26 @@ func (s *Session) handleResponse(streamID uint32, status string, headers map[str
 
 	if endStream {
 		s.deliverResponse(streamID, resp)
+	} else {
+		// Store response metadata for when data frames arrive
+		s.streamRespMu.Lock()
+		s.streamRespStatus[streamID] = resp.Status
+		s.streamRespHeaders[streamID] = resp.Headers
+		s.streamRespMu.Unlock()
+
+		// Create pending channel
+		s.incomingResponsesMu.Lock()
+		ch := make(chan *Response, 1)
+		s.incomingResponses[streamID] = ch
+		s.incomingResponsesMu.Unlock()
+
+		// Prepare data accumulation
+		s.streamDataMu.Lock()
+		s.streamData[streamID] = []byte{}
+		s.streamDataMu.Unlock()
+		s.streamEndMu.Lock()
+		s.streamEnded[streamID] = false
+		s.streamEndMu.Unlock()
 	}
 }
 
@@ -373,64 +451,188 @@ func (s *Session) handleRequest(streamID uint32, method string, headers map[stri
 		Headers: make(map[string][]string),
 	}
 	for k, v := range headers {
-		if k != ":method" && k != ":path" && !strings.HasPrefix(k, ":") {
+		if !strings.HasPrefix(k, ":") {
 			req.Headers[k] = append(req.Headers[k], v)
 		}
 	}
 
-	// TODO: dispatch to request handler
-	log.Printf("Received request: %s %s (stream %d)", method, req.Path, streamID)
+	incoming := &IncomingRequest{
+		StreamID: streamID,
+		Header:   *req,
+		Body:     nil,
+		RespCh:   make(chan *Response, 1),
+	}
+
+	if endStream {
+		// No body, dispatch immediately
+		s.dispatchIncoming(incoming)
+	} else {
+		// Wait for data frames
+		s.streamDataMu.Lock()
+		s.streamData[streamID] = []byte{}
+		s.streamDataMu.Unlock()
+		s.streamEndMu.Lock()
+		s.streamEnded[streamID] = false
+		s.streamEndMu.Unlock()
+
+		// Store for data accumulation
+		s.incomingResponsesMu.Lock()
+		s.incomingResponses[streamID] = incoming.RespCh
+		s.incomingResponsesMu.Unlock()
+
+		// Store incoming request reference
+		_ = incoming
+	}
 }
 
 func (s *Session) handleDataFrame(df *http2.DataFrame) {
-	// TODO: accumulate body data for pending requests/responses
+	streamID := df.StreamID
+
+	// Accumulate data
+	s.streamDataMu.Lock()
+	s.streamData[streamID] = append(s.streamData[streamID], df.Data()...)
+	s.streamDataMu.Unlock()
+
 	if df.StreamEnded() {
-		// End of stream
+		s.streamEndMu.Lock()
+		s.streamEnded[streamID] = true
+		s.streamEndMu.Unlock()
+
+		// Check if this is a pending response or incoming request
+		s.incomingResponsesMu.Lock()
+		ch, isPending := s.incomingResponses[streamID]
+		delete(s.incomingResponses, streamID)
+		s.incomingResponsesMu.Unlock()
+
+		if isPending && ch != nil {
+			// This is a response body — get stored headers
+			s.streamRespMu.Lock()
+			status := s.streamRespStatus[streamID]
+			headers := s.streamRespHeaders[streamID]
+			delete(s.streamRespStatus, streamID)
+			delete(s.streamRespHeaders, streamID)
+			s.streamRespMu.Unlock()
+
+			s.streamDataMu.Lock()
+			data := s.streamData[streamID]
+			delete(s.streamData, streamID)
+			s.streamDataMu.Unlock()
+
+			if headers == nil {
+				headers = make(map[string][]string)
+			}
+
+			resp := &Response{
+				Status:  status,
+				Headers: headers,
+				Body:    data,
+			}
+
+			// Deliver to pendingRequests (waited by SendRequest)
+			s.pendingRequestsMu.Lock()
+			if reqCh, ok := s.pendingRequests[streamID]; ok {
+				select {
+				case reqCh <- resp:
+				default:
+				}
+				delete(s.pendingRequests, streamID)
+			}
+			s.pendingRequestsMu.Unlock()
+		} else {
+			// This is a request body
+			s.streamDataMu.Lock()
+			data := s.streamData[streamID]
+			delete(s.streamData, streamID)
+			s.streamDataMu.Unlock()
+
+			// Build incoming request
+			req := &IncomingRequest{
+				StreamID: streamID,
+				Header:   RequestHeader{},
+				Body:     data,
+				RespCh:   make(chan *Response, 1),
+			}
+
+			s.dispatchIncoming(req)
+		}
 	}
 }
 
 func (s *Session) handleRSTStream(rst *http2.RSTStreamFrame) {
-	s.pendingMu.Lock()
-	if ch, ok := s.pending[rst.StreamID]; ok {
-		close(ch)
-		delete(s.pending, rst.StreamID)
-	}
-	s.pendingMu.Unlock()
+	s.cleanupPending(rst.StreamID)
+	s.streamDataMu.Lock()
+	delete(s.streamData, rst.StreamID)
+	s.streamDataMu.Unlock()
 }
 
 func (s *Session) handlePing(ping *http2.PingFrame) {
 	if !ping.IsAck() {
-		s.framer.WritePing(true, ping.Data)
+		_ = s.framer.WritePing(true, ping.Data)
+	}
+}
+
+func (s *Session) dispatchIncoming(req *IncomingRequest) {
+	if s.requestHandler != nil {
+		s.requestHandler(req)
+	} else {
+		// Fallback: send to channel
+		select {
+		case s.incoming <- req:
+		default:
+		}
 	}
 }
 
 func (s *Session) deliverResponse(streamID uint32, resp *Response) {
-	s.pendingMu.Lock()
-	if ch, ok := s.pending[streamID]; ok {
+	s.pendingRequestsMu.Lock()
+	if ch, ok := s.pendingRequests[streamID]; ok {
 		select {
 		case ch <- resp:
 		default:
 		}
-		delete(s.pending, streamID)
+		delete(s.pendingRequests, streamID)
 	}
-	s.pendingMu.Unlock()
+	s.pendingRequestsMu.Unlock()
+}
+
+func (s *Session) cleanupPending(streamID uint32) {
+	s.pendingRequestsMu.Lock()
+	if ch, ok := s.pendingRequests[streamID]; ok {
+		close(ch)
+		delete(s.pendingRequests, streamID)
+	}
+	s.pendingRequestsMu.Unlock()
+	
+	s.incomingResponsesMu.Lock()
+	if ch, ok := s.incomingResponses[streamID]; ok {
+		close(ch)
+		delete(s.incomingResponses, streamID)
+	}
+	s.incomingResponsesMu.Unlock()
 }
 
 func (s *Session) decodeHeaders(hf *http2.HeadersFrame) map[string]string {
 	headers := make(map[string]string)
-	s.headerBuf.Reset()
+	s.decodeHeadersResult = headers
+	defer func() { s.decodeHeadersResult = nil }()
 
-	// Read header block fragment
-	hf.HeaderBlockFragment()
-	// We need to feed the fragment to the decoder
-	// For now, use a simple approach
-	_ = hf
+	fragment := hf.HeaderBlockFragment()
+	if _, err := s.hpackDec.Write(fragment); err != nil {
+		log.Printf("HPACK decode error: %v", err)
+		return headers
+	}
 
 	return headers
 }
 
+// nextStreamID returns the next server-initiated stream ID (even numbers)
 func (s *Session) nextStreamID() uint32 {
-	return atomic.AddUint32(&s.streamID, 2)
+	return atomic.AddUint32(&s.serverStreamID, 2)
+}
+
+// nextClientStreamID returns the next client-initiated stream ID (odd numbers)
+func (s *Session) nextClientStreamID() uint32 {
+	return atomic.AddUint32(&s.clientStreamID, 2) + 1
 }
 
 // Close closes the session
@@ -439,12 +641,18 @@ func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		close(s.closed)
 		// Close pending channels
-		s.pendingMu.Lock()
-		for id, ch := range s.pending {
+		s.pendingRequestsMu.Lock()
+		for id, ch := range s.pendingRequests {
 			close(ch)
-			delete(s.pending, id)
+			delete(s.pendingRequests, id)
 		}
-		s.pendingMu.Unlock()
+		s.pendingRequestsMu.Unlock()
+		s.incomingResponsesMu.Lock()
+		for id, ch := range s.incomingResponses {
+			close(ch)
+			delete(s.incomingResponses, id)
+		}
+		s.incomingResponsesMu.Unlock()
 		err = s.conn.Close()
 	})
 	return err
@@ -479,9 +687,9 @@ func (s *Session) HTTPHandler() http.Handler {
 		ctx := r.Context()
 
 		// Read body
-		var body []byte
-		if r.Body != nil {
-			body, _ = io.ReadAll(r.Body)
+		var bodyReader io.Reader
+		if r.Body != nil && r.ContentLength != 0 {
+			bodyReader = r.Body
 		}
 
 		// Send through tunnel
@@ -489,25 +697,28 @@ func (s *Session) HTTPHandler() http.Handler {
 			Method:  r.Method,
 			Path:    r.URL.RequestURI(),
 			Headers: r.Header,
-		}, bytes.NewReader(body))
+		}, bodyReader)
 		if err != nil {
+			log.Printf("tunnel error for %s %s: %v", r.Method, r.URL.Path, err)
 			http.Error(w, fmt.Sprintf("tunnel error: %v", err), http.StatusBadGateway)
 			return
 		}
 
-		// Write response
+		// Write response headers
 		for k, vals := range resp.Headers {
 			for _, v := range vals {
 				w.Header().Add(k, v)
 			}
 		}
 		w.WriteHeader(resp.Status)
-		w.Write(resp.Body)
+		if len(resp.Body) > 0 {
+			w.Write(resp.Body)
+		}
 	})
 }
 
 // ServeTunnel starts the tunnel server, accepting client connections
-func ServeTunnel(ctx context.Context, listener net.Listener, handler func(*Session)) error {
+func ServeTunnel(ctx context.Context, listener net.Listener, sessionHandler func(*Session)) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -525,7 +736,7 @@ func ServeTunnel(ctx context.Context, listener net.Listener, handler func(*Sessi
 				conn.Close()
 				return
 			}
-			handler(session)
+			sessionHandler(session)
 		}()
 	}
 }
@@ -541,5 +752,5 @@ func DialTunnel(ctx context.Context, addr string, tlsCfg *tls.Config) (*Session,
 	return NewClientSession(ctx, conn)
 }
 
-// Ensure http package is used
-var _ = bufio.NewReader
+// Ensure bufio is used (for potential future use)
+var _ = bufio.NewReaderSize
