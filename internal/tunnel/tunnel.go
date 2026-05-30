@@ -169,7 +169,13 @@ func NewClientSession(ctx context.Context, conn net.Conn) (*Session, error) {
 	s.hpackEnc = hpack.NewEncoder(&s.headerBuf)
 	s.hpackDec = hpack.NewDecoder(4096, s.onHeaderField)
 
-	// Send client preface
+	// Send HTTP/2 client preface (PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n)
+	preface := "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+	if _, err := conn.Write([]byte(preface)); err != nil {
+		return nil, fmt.Errorf("writing preface: %w", err)
+	}
+
+	// Send client SETTINGS
 	if err := s.framer.WriteSettings(); err != nil {
 		return nil, fmt.Errorf("writing settings: %w", err)
 	}

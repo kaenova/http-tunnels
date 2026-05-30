@@ -88,7 +88,7 @@ func ServerTLSConfig(cfg TLSConfig) (*tls.Config, error) {
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
-		NextProtos:   []string{"h2"}, // Advertise HTTP/2
+		NextProtos:   []string{"h2", "http/1.1"}, // Support both HTTP/2 and HTTP/1.1
 	}, nil
 }
 

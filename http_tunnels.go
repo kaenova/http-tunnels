@@ -74,11 +74,11 @@ Options:
 			hostPart = hostPart[:idx]
 		}
 		if !strings.Contains(hostPart, ":") {
-			hostPart = hostPart + ":50051"
+			hostPart = hostPart + ":8443"
 		}
 		tunnelAddr = hostPart
 	} else if !strings.Contains(tunnelAddr, ":") {
-		tunnelAddr = tunnelAddr + ":50051"
+		tunnelAddr = tunnelAddr + ":8443"
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
