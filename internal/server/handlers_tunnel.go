@@ -37,7 +37,7 @@ func (a *App) handleNewTunnel(w http.ResponseWriter, r *http.Request) {
 	if domain == "" {
 		domain = "tunnel-" + protocol.GenerateID(8)
 	}
-	domain = protocol.NormalizeHost(domain + ".localhost")
+	domain = domain + "." + a.config.TunnelDomain
 
 	record, err := a.store.CreateTunnel(r.Context(), requestedSubdomain, domain, hashValue(domainKey), r.RemoteAddr, r.UserAgent())
 	if err != nil {

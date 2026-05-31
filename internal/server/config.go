@@ -1,5 +1,11 @@
 package server
 
+import (
+	"os"
+	"strconv"
+	"strings"
+)
+
 // Config holds server configuration
 type Config struct {
 	ListenAddr                   string
@@ -16,22 +22,70 @@ type Config struct {
 	DefaultReconnectMaxDelay     int
 	DefaultReconnectMultiplier   float64
 	DefaultReconnectMaxRetries   int
+	TunnelDomain                 string
 }
 
 // LoadConfig loads configuration from environment variables
 func LoadConfig() Config {
-	return Config{
-		ListenAddr:                   ":80",
-		DBPath:                       "http-tunnels.db",
-		MaxConcurrentRequests:        500,
-		DefaultRequestTimeout:        10000,
-		DefaultBackendTimeout:        30000,
-		DefaultReconnectEnabled:      true,
-		DefaultReconnectInitialDelay: 1000,
-		DefaultReconnectMaxDelay:     60000,
-		DefaultReconnectMultiplier:   2.0,
-		DefaultReconnectMaxRetries:   0,
+	tunnelDomain := os.Getenv("TUNNEL_DOMAIN")
+	if tunnelDomain == "" {
+		tunnelDomain = "localhost"
 	}
+
+	return Config{
+		ListenAddr:                   getEnv("LISTEN_ADDR", ":80"),
+		DBPath:                       getEnv("DB_PATH", "http-tunnels.db"),
+		TunnelDomain:                 tunnelDomain,
+		MaxConcurrentRequests:        getEnvInt("MAX_CONCURRENT_REQUESTS", 500),
+		DefaultRequestTimeout:        getEnvInt("DEFAULT_REQUEST_TIMEOUT", 10000),
+		DefaultBackendTimeout:        getEnvInt("DEFAULT_BACKEND_TIMEOUT", 30000),
+		DefaultReconnectEnabled:      getEnvBool("DEFAULT_RECONNECT_ENABLED", true),
+		DefaultReconnectInitialDelay: getEnvInt("DEFAULT_RECONNECT_INITIAL_DELAY", 1000),
+		DefaultReconnectMaxDelay:     getEnvInt("DEFAULT_RECONNECT_MAX_DELAY", 60000),
+		DefaultReconnectMultiplier:   getEnvFloat("DEFAULT_RECONNECT_MULTIPLIER", 2.0),
+		DefaultReconnectMaxRetries:   getEnvInt("DEFAULT_RECONNECT_MAX_RETRIES", 0),
+		WebPassword:                  os.Getenv("WEB_PASSWORD"),
+		SessionSecret:                getEnv("WEB_SESSION_SECRET", os.Getenv("WEB_PASSWORD")),
+		CookieSecure:                 getEnvBool("COOKIE_SECURE", false),
+		ServerMessage:                os.Getenv("SERVER_MESSAGE"),
+	}
+}
+
+func getEnv(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+func getEnvInt(key string, defaultVal int) int {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+	}
+	return defaultVal
+}
+
+func getEnvBool(key string, defaultVal bool) bool {
+	if v := os.Getenv(key); v != "" {
+		switch strings.ToLower(v) {
+		case "1", "true", "yes":
+			return true
+		case "0", "false", "no":
+			return false
+		}
+	}
+	return defaultVal
+}
+
+func getEnvFloat(key string, defaultVal float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return defaultVal
 }
 
 // ValidateAdminConfiguration validates admin config
