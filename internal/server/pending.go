@@ -23,6 +23,7 @@ type PendingRequest struct {
 	ErrorCh     chan error
 	bodyCh      chan []byte
 	CreatedAt   time.Time
+	LogEntry    *RequestResponseLog // for request/response logging
 }
 
 // PendingResponse is the response received from the client via dedicated WS

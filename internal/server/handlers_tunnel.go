@@ -40,9 +40,12 @@ func (a *App) handleNewTunnel(w http.ResponseWriter, r *http.Request) {
 	record, err := a.store.CreateTunnel(r.Context(), requestedSubdomain, domain, hashValue(domainKey), r.RemoteAddr, r.UserAgent())
 	if err != nil {
 		log.Printf("create tunnel error: %v", err)
+		_ = a.store.LogTunnelCreation(r.Context(), "", domain, requestedSubdomain, r.RemoteAddr, r.UserAgent(), false, err.Error())
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+
+	_ = a.store.LogTunnelCreation(r.Context(), record.ID, record.Domain, requestedSubdomain, r.RemoteAddr, r.UserAgent(), true, "")
 
 	resp := map[string]interface{}{
 		"id":         record.ID,
@@ -227,11 +230,9 @@ func (a *App) handleTunnelResponseWS(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 	host := protocol.NormalizeHost(r.Host)
-	log.Printf("handleTunnelHTTP: host=%q path=%s", host, r.URL.Path)
 
 	session, ok := a.sessions.Get(host)
 	if !ok {
-		// Try wildcard match
 		for domain, sess := range a.sessions.GetAll() {
 			if strings.HasSuffix(host, "."+domain) || host == domain {
 				session = sess
@@ -245,7 +246,6 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check concurrent limit
 	if !session.CanAcceptRequest() {
 		http.Error(w, "Too many concurrent requests", http.StatusServiceUnavailable)
 		return
@@ -253,7 +253,48 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 	session.IncrementActive()
 	defer session.DecrementActive()
 
+	startedAt := time.Now().UTC()
 	requestID := protocol.GenerateID(16)
+	requestPath := buildRequestPath(r)
+	requestHeaders := cloneHeaders(r.Header)
+	requestCapture := NewBodyCapture(contentTypeFromHeaders(requestHeaders))
+
+	logEntry := &RequestResponseLog{
+		ID:                 requestID,
+		TunnelID:           session.TunnelID,
+		Domain:             session.Domain,
+		Method:             r.Method,
+		Path:               requestPath,
+		RequestHeaders:     requestHeaders,
+		RequestContentType: contentTypeFromHeaders(requestHeaders),
+		StartedAt:          startedAt,
+	}
+
+	var (
+		responseHeaders map[string][]string
+		responseCapture *BodyCapture
+		statusCode      int
+		responseErr     error
+	)
+
+	defer func() {
+		completedAt := time.Now().UTC()
+		logEntry.CompletedAt = &completedAt
+		logEntry.DurationMs = completedAt.Sub(startedAt).Milliseconds()
+		logEntry.StatusCode = statusCode
+		logEntry.RequestPreview = requestCapture.Preview()
+		logEntry.ResponseHeaders = responseHeaders
+		if responseCapture != nil {
+			logEntry.ResponsePreview = responseCapture.Preview()
+			logEntry.ResponseContentType = contentTypeFromHeaders(responseHeaders)
+		}
+		if responseErr != nil {
+			logEntry.ErrorMessage = responseErr.Error()
+		}
+		if err := a.store.RecordRequestLog(r.Context(), *logEntry); err != nil {
+			a.logError("recording request log", err)
+		}
+	}()
 
 	if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
 		http.Error(w, "WebSocket upgrade not yet implemented", http.StatusNotImplemented)
@@ -265,14 +306,15 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 		ID:         requestID,
 		TunnelID:   session.TunnelID,
 		Method:     r.Method,
-		Path:       r.URL.RequestURI(),
-		Headers:    cloneHeaders(r.Header),
+		Path:       requestPath,
+		Headers:    requestHeaders,
 		ContentLen: r.ContentLength,
 		BodyReader: bodyReader,
 		ResponseCh: make(chan *PendingResponse, 1),
 		ErrorCh:    make(chan error, 1),
 		bodyCh:     make(chan []byte, 64),
 		CreatedAt:  time.Now(),
+		LogEntry:   logEntry,
 	}
 	a.pending.Add(req)
 
@@ -285,14 +327,27 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 		Type:          protocol.FrameType_REQUEST,
 		RequestId:     requestID,
 		Method:        r.Method,
-		Path:          r.URL.RequestURI(),
+		Path:          requestPath,
 		Headers:       headers,
 		ContentLength: r.ContentLength,
 	})
 
 	if r.Body != nil && r.ContentLength > 0 {
 		go func() {
-			io.Copy(bodyWriter, r.Body)
+			buf := make([]byte, 32*1024)
+			for {
+				n, err := r.Body.Read(buf)
+				if n > 0 {
+					chunk := make([]byte, n)
+					copy(chunk, buf[:n])
+					logEntry.RequestBytes += int64(n)
+					requestCapture.Observe(chunk)
+					bodyWriter.Write(chunk)
+				}
+				if err != nil {
+					break
+				}
+			}
 			bodyWriter.Close()
 		}()
 	} else {
@@ -301,6 +356,9 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case resp := <-req.ResponseCh:
+		statusCode = resp.Status
+		responseHeaders = resp.Headers
+		responseCapture = NewBodyCapture(contentTypeFromHeaders(resp.Headers))
 		for k, vals := range resp.Headers {
 			for _, v := range vals {
 				w.Header().Add(k, v)
@@ -308,15 +366,22 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(resp.Status)
 		for chunk := range req.bodyCh {
+			logEntry.ResponseBytes += int64(len(chunk))
+			responseCapture.Observe(chunk)
 			w.Write(chunk)
 		}
 	case err := <-req.ErrorCh:
+		responseErr = err
 		if re, ok := err.(*requestError); ok {
+			statusCode = re.status
 			http.Error(w, re.msg, re.status)
 		} else {
+			statusCode = http.StatusBadGateway
 			http.Error(w, err.Error(), http.StatusBadGateway)
 		}
 	case <-r.Context().Done():
+		responseErr = r.Context().Err()
+		statusCode = 499
 	}
 
 	a.pending.Remove(requestID)
