@@ -1,0 +1,76 @@
+syntax = "proto3";
+package protocol;
+option go_package = "github.com/kaenova/http-tunnels/internal/protocol";
+
+message Frame {
+  FrameType type = 1;
+  string request_id = 2;
+
+  // Request notification
+  string method = 3;
+  string path = 4;
+  map<string, StringList> headers = 5;
+  int64 content_length = 6;
+
+  // Response
+  int32 status = 7;
+  map<string, StringList> response_headers = 8;
+
+  // Body / data chunk (raw bytes, no base64 needed)
+  bytes chunk = 9;
+
+  // Error
+  string error = 10;
+
+  // Registration
+  string domain = 11;
+  string domain_key = 12;
+  string tunnel_id = 13;
+  string server_message = 14;
+
+  // Tunnel config (sent on registration)
+  TunnelConfig config = 15;
+}
+
+message StringList {
+  repeated string values = 1;
+}
+
+message TunnelConfig {
+  int32 max_concurrent = 1;
+  int32 request_timeout_ms = 2;
+  int32 backend_timeout_ms = 3;
+  ReconnectConfig reconnect = 4;
+}
+
+message ReconnectConfig {
+  bool enabled = 1;
+  int32 initial_delay_ms = 2;
+  int32 max_delay_ms = 3;
+  double multiplier = 4;
+  int32 max_retries = 5;
+  bool jitter = 6;
+}
+
+enum FrameType {
+  FRAME_TYPE_UNSPECIFIED = 0;
+
+  // Main WS (signalling)
+  REGISTER = 1;
+  REGISTERED = 2;
+  REQUEST = 3;
+  REQUEST_ACK = 4;
+  REQUEST_ERROR = 5;
+  PING = 6;
+  PONG = 7;
+
+  // Dedicated WS (per-request)
+  BODY = 10;
+  BODY_END = 11;
+  RESPONSE_START = 12;
+  RESPONSE_BODY = 13;
+  RESPONSE_END = 14;
+  RESPONSE_ERROR = 15;
+  WS_DATA = 16;
+  WS_CLOSE = 17;
+}

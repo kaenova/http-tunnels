@@ -1,129 +1,90 @@
 package server
 
 import (
-	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/kaenova/http-tunnels/internal/protocol"
 )
 
+// TunnelSessionStore manages active tunnel sessions (main WS connections)
+type TunnelSessionStore struct {
+	mu       sync.RWMutex
+	sessions map[string]*TunnelSession // domain -> session
+}
+
+// NewTunnelSessionStore creates a new session store
+func NewTunnelSessionStore() *TunnelSessionStore {
+	return &TunnelSessionStore{
+		sessions: make(map[string]*TunnelSession),
+	}
+}
+
+// Get retrieves a session by domain
+func (s *TunnelSessionStore) Get(domain string) (*TunnelSession, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess, ok := s.sessions[domain]
+	return sess, ok
+}
+
+// Set stores a session, returning the previous one if any
+func (s *TunnelSessionStore) Set(domain string, session *TunnelSession) *TunnelSession {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev := s.sessions[domain]
+	s.sessions[domain] = session
+	return prev
+}
+
+// Delete removes a session
+func (s *TunnelSessionStore) Delete(domain string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, domain)
+}
+
+// GetAll returns all sessions (for iteration)
+func (s *TunnelSessionStore) GetAll() map[string]*TunnelSession {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make(map[string]*TunnelSession, len(s.sessions))
+	for k, v := range s.sessions {
+		result[k] = v
+	}
+	return result
+}
+
+// Count returns the number of active sessions
+func (s *TunnelSessionStore) Count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.sessions)
+}
+
+// TunnelSession represents an active tunnel connection
 type TunnelSession struct {
-	TunnelID string
-	Domain   string
-	Conn     *protocol.Connection
-	pending  sync.Map
+	TunnelID      string
+	Domain        string
+	Conn          *protocol.Connection
+	MaxConcurrent int
+	activeCount   int32 // atomic counter for active requests
 }
 
-func NewTunnelSession(record TunnelRecord, conn *protocol.Connection) *TunnelSession {
-	return &TunnelSession{
-		TunnelID: record.ID,
-		Domain:   record.Domain,
-		Conn:     conn,
+// CanAcceptRequest checks if the tunnel can accept another request
+func (s *TunnelSession) CanAcceptRequest() bool {
+	if s.MaxConcurrent <= 0 {
+		return true // unlimited
 	}
+	return atomic.LoadInt32(&s.activeCount) < int32(s.MaxConcurrent)
 }
 
-func (s *TunnelSession) Send(frame protocol.Frame) error {
-	return s.Conn.Send(frame)
+// IncrementActive increments the active request count
+func (s *TunnelSession) IncrementActive() {
+	atomic.AddInt32(&s.activeCount, 1)
 }
 
-func (s *TunnelSession) RegisterPending(requestID string, stream *responseStream) {
-	s.pending.Store(requestID, stream)
-}
-
-func (s *TunnelSession) RemovePending(requestID string) {
-	s.pending.Delete(requestID)
-}
-
-func (s *TunnelSession) HandleFrame(frame protocol.Frame) error {
-	value, ok := s.pending.Load(frame.ID)
-	if !ok {
-		return nil
-	}
-	stream := value.(*responseStream)
-
-	switch frame.Type {
-	case protocol.FrameTypeResponseStart:
-		stream.start(frame)
-	case protocol.FrameTypeResponseBody:
-		stream.write(frame.Chunk)
-	case protocol.FrameTypeResponseEnd:
-		stream.finish()
-		s.pending.Delete(frame.ID)
-	case protocol.FrameTypeResponseError:
-		stream.fail(fmt.Errorf("%s", frame.Error))
-		s.pending.Delete(frame.ID)
-	case protocol.FrameTypeWebSocketUpgrade:
-		stream.start(frame)
-	case protocol.FrameTypeWebSocketData:
-		stream.write(frame.Chunk)
-	case protocol.FrameTypeWebSocketClose:
-		stream.finish()
-		s.pending.Delete(frame.ID)
-	case protocol.FrameTypeWebSocketError:
-		stream.fail(fmt.Errorf("%s", frame.Error))
-		s.pending.Delete(frame.ID)
-	}
-	return nil
-}
-
-func (s *TunnelSession) FailAll(err error) {
-	s.pending.Range(func(key, value any) bool {
-		stream := value.(*responseStream)
-		stream.fail(err)
-		s.pending.Delete(key)
-		return true
-	})
-}
-
-type responseStream struct {
-	startOnce sync.Once
-	closeOnce sync.Once
-	startCh   chan protocol.Frame
-	bodyCh    chan []byte
-	errCh     chan error
-	doneCh    chan struct{}
-}
-
-func newResponseStream() *responseStream {
-	return &responseStream{
-		startCh: make(chan protocol.Frame, 1),
-		bodyCh:  make(chan []byte, 16),
-		errCh:   make(chan error, 1),
-		doneCh:  make(chan struct{}),
-	}
-}
-
-func (s *responseStream) start(frame protocol.Frame) {
-	s.startOnce.Do(func() {
-		s.startCh <- frame
-	})
-}
-
-func (s *responseStream) write(chunk []byte) {
-	select {
-	case <-s.doneCh:
-		return
-	default:
-	}
-	copied := make([]byte, len(chunk))
-	copy(copied, chunk)
-	select {
-	case s.bodyCh <- copied:
-	case <-s.doneCh:
-	}
-}
-
-func (s *responseStream) finish() {
-	s.closeOnce.Do(func() {
-		close(s.bodyCh)
-		close(s.doneCh)
-	})
-}
-
-func (s *responseStream) fail(err error) {
-	select {
-	case s.errCh <- err:
-	default:
-	}
-	s.finish()
+// DecrementActive decrements the active request count
+func (s *TunnelSession) DecrementActive() {
+	atomic.AddInt32(&s.activeCount, -1)
 }

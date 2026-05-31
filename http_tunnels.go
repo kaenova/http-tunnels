@@ -1,14 +1,11 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"os"
-
-	"github.com/kaenova/http-tunnels/internal/client"
 )
 
 func main() {
-	if err := client.Run(os.Args[1:]); err != nil {
-		log.Fatal(err)
-	}
+	fmt.Println("http-tunnels v5 - under development")
+	os.Exit(0)
 }
