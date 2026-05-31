@@ -27,14 +27,13 @@ RUN go mod download
 COPY . .
 COPY --from=web-builder /app/cmd/server/web/dist ./cmd/server/web/dist
 
-# Generate protobuf
+# Generate protobuf (v5 uses proto/frame.proto)
 RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest && \
-    PATH="$PATH:/root/go/bin" protoc --go_out=. --go_opt=paths=source_relative \
-      --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/tunnel.proto
+    PATH="$PATH:/root/go/bin" protoc --go_out=. --go_opt=paths=source_relative proto/frame.proto
 
+# Build server binary only (client is at root http_tunnels.go)
 RUN go build -o http-tunnels-server -ldflags "-s -w -X main.Version=${VERSION}" ./cmd/server && \
-    go build -o http-tunnels -ldflags "-s -w -X main.Version=${VERSION}" ./cmd/client
+    go build -o http-tunnels -ldflags "-s -w -X main.Version=${VERSION}" .
 
 # Stage 3: Create a lightweight runtime image
 FROM alpine:latest
@@ -49,6 +48,10 @@ COPY --from=builder /app/cmd/server/web/dist ./cmd/server/web/dist
 
 VOLUME ["/data"]
 
-EXPOSE 8443 8080
+EXPOSE 80
+
+ENV LISTEN_ADDR=:80
+ENV DB_PATH=/data/http-tunnels.db
+ENV COOKIE_SECURE=false
 
 CMD ["./http-tunnels-server"]
