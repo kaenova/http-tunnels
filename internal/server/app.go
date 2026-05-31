@@ -58,6 +58,12 @@ func (a *App) Serve(listener net.Listener) error {
 	mux.HandleFunc("/tunnel", a.handleTunnelWS)
 	mux.HandleFunc("/tunnel-response", a.handleTunnelResponseWS)
 
+	// Static assets (referenced by admin SPA at root paths)
+	mux.HandleFunc("/assets/", a.serveAsset)
+	mux.HandleFunc("/favicon.svg", a.serveAsset)
+	mux.HandleFunc("/favicon.ico", a.serveAsset)
+	mux.HandleFunc("/icons.svg", a.serveAsset)
+
 	// Admin routes
 	mux.HandleFunc("/api/admin/", a.handleAdminAPI)
 	mux.HandleFunc("/admin/auth/logout", a.handleAdminLogout)
