@@ -42,7 +42,8 @@ RUN apk add --no-cache ca-certificates && mkdir -p /data
 
 WORKDIR /root/
 
-COPY --from=builder /app/http-tunnels-server ./
+# Copy binary and rename to 'main' for backward compatibility with existing deployments
+COPY --from=builder /app/http-tunnels-server ./main
 COPY --from=builder /app/http-tunnels ./
 COPY --from=builder /app/cmd/server/web/dist ./cmd/server/web/dist
 
@@ -54,4 +55,5 @@ ENV LISTEN_ADDR=:80
 ENV DB_PATH=/data/http-tunnels.db
 ENV COOKIE_SECURE=false
 
-CMD ["./http-tunnels-server"]
+ENTRYPOINT ["./main"]
+CMD []
