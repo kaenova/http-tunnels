@@ -1,42 +1,27 @@
 package server
 
 import (
-	"context"
-	"database/sql"
-	"errors"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/kaenova/http-tunnels/internal/protocol"
 )
 
-var (
-	tunnelUpgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	subdomainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
-)
+var tunnelUpgrader = websocket.Upgrader{
+	EnableCompression: true,
+	CheckOrigin:       func(r *http.Request) bool { return true },
+}
 
 func (a *App) handlePing(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	summary, err := a.store.dashboardSummary(r.Context())
-	if err != nil {
-		a.logError("loading ping summary", err)
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ping":               "pong",
-		"active_tunnels":     summary.ActiveTunnels,
-		"registered_tunnels": summary.RegisteredTunnels,
-	})
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ping":"pong","active_tunnels":` + itoa(a.sessions.Count()) + `}`))
 }
 
 func (a *App) handleNewTunnel(w http.ResponseWriter, r *http.Request) {
@@ -46,470 +31,354 @@ func (a *App) handleNewTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestedSubdomain := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("subdomain")))
-	if requestedSubdomain != "" && !subdomainPattern.MatchString(requestedSubdomain) {
-		_ = a.store.LogTunnelCreation(r.Context(), "", "", requestedSubdomain, r.RemoteAddr, r.UserAgent(), false, "invalid subdomain")
-		http.Error(w, "invalid subdomain", http.StatusBadRequest)
-		return
-	}
-
-	baseHost := normalizeRequestHost(r.Host)
-	if baseHost == "" {
-		_ = a.store.LogTunnelCreation(r.Context(), "", "", requestedSubdomain, r.RemoteAddr, r.UserAgent(), false, "missing host")
-		http.Error(w, "missing host", http.StatusBadRequest)
-		return
-	}
-
-	domain := ""
-	if requestedSubdomain == "" {
-		for attempts := 0; attempts < 16; attempts++ {
-			candidate := randomSubdomain()
-			candidateDomain := candidate + "." + baseHost
-			exists, err := a.store.DomainExists(r.Context(), candidateDomain)
-			if err != nil {
-				a.logError("checking generated subdomain", err)
-				http.Error(w, "internal server error", http.StatusInternalServerError)
-				return
-			}
-			if !exists {
-				requestedSubdomain = candidate
-				domain = candidateDomain
-				break
-			}
-		}
-		if domain == "" {
-			_ = a.store.LogTunnelCreation(r.Context(), "", "", "", r.RemoteAddr, r.UserAgent(), false, "could not allocate random subdomain")
-			http.Error(w, "could not allocate subdomain", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		domain = requestedSubdomain + "." + baseHost
-		exists, err := a.store.DomainExists(r.Context(), domain)
-		if err != nil {
-			a.logError("checking requested subdomain", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-		if exists {
-			_ = a.store.LogTunnelCreation(r.Context(), "", domain, requestedSubdomain, r.RemoteAddr, r.UserAgent(), false, "subdomain already in use")
-			http.Error(w, "subdomain already in use", http.StatusBadRequest)
-			return
-		}
-	}
-
 	domainKey := protocol.GenerateID(16)
+
+	domain := requestedSubdomain
+	if domain == "" {
+		domain = "tunnel-" + protocol.GenerateID(8)
+	}
+	domain = protocol.NormalizeHost(domain + ".localhost")
+
 	record, err := a.store.CreateTunnel(r.Context(), requestedSubdomain, domain, hashValue(domainKey), r.RemoteAddr, r.UserAgent())
 	if err != nil {
-		a.logError("creating tunnel", err)
-		_ = a.store.LogTunnelCreation(r.Context(), "", domain, requestedSubdomain, r.RemoteAddr, r.UserAgent(), false, err.Error())
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		log.Printf("create tunnel error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if err := a.store.LogTunnelCreation(r.Context(), record.ID, record.Domain, requestedSubdomain, r.RemoteAddr, r.UserAgent(), true, ""); err != nil {
-		a.logError("logging tunnel creation", err)
-	}
 
-	response := map[string]any{
+	resp := map[string]interface{}{
 		"id":         record.ID,
 		"domain":     record.Domain,
 		"domain_key": domainKey,
 	}
-	if a.Config.ServerMessage != "" {
-		response["server_message"] = a.Config.ServerMessage
+	if a.config.ServerMessage != "" {
+		resp["server_message"] = a.config.ServerMessage
 	}
 
-	log.Printf("New domain registered: %s", record.Domain)
-	writeJSON(w, http.StatusOK, response)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
-func (a *App) handleTunnelWebSocket(w http.ResponseWriter, r *http.Request) {
-	domain := normalizeRequestHost(r.URL.Query().Get("domain"))
+func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
+	domain := strings.TrimSpace(r.URL.Query().Get("domain"))
 	domainKey := strings.TrimSpace(r.URL.Query().Get("domain_key"))
+
 	if domain == "" || domainKey == "" {
-		http.Error(w, "both domain and domain_key need provided", http.StatusBadRequest)
+		http.Error(w, "domain and domain_key required", http.StatusBadRequest)
 		return
 	}
 
 	record, err := a.store.FindTunnelForConnection(r.Context(), domain, hashValue(domainKey))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "invalid domain key", http.StatusForbidden)
-			return
-		}
-		a.logError("validating tunnel connection", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		http.Error(w, "invalid domain key", http.StatusForbidden)
 		return
 	}
 
-	wsConn, err := tunnelUpgrader.Upgrade(w, r, nil)
+	conn, err := tunnelUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		a.logError("upgrading websocket", err)
+		log.Printf("ws upgrade error: %v", err)
 		return
 	}
 
-	connection := protocol.NewConnection(wsConn)
-	session := NewTunnelSession(record, connection)
-	previous := a.replaceSession(record.Domain, session)
-	if previous != nil {
-		previous.FailAll(errors.New("tunnel replaced by a newer connection"))
-		_ = previous.Conn.Close()
-	}
+	ws := protocol.NewConnection(conn)
 
-	if err := a.store.MarkTunnelActive(context.Background(), record.ID, r.RemoteAddr, r.UserAgent()); err != nil {
-		a.deleteSession(record.Domain, session)
-		session.FailAll(err)
-		_ = session.Conn.Close()
-		a.logError("marking tunnel active", err)
+	frame, err := ws.ReadFrame()
+	if err != nil || frame.GetType() != protocol.FrameType_REGISTER {
+		ws.Close()
 		return
 	}
 
-	log.Printf("Tunnel connected: %s", record.Domain)
-	defer func() {
-		a.deleteSession(record.Domain, session)
-		session.FailAll(errors.New("tunnel disconnected"))
-		_ = session.Conn.Close()
-		if err := a.store.MarkTunnelDisconnected(context.Background(), record.ID); err != nil {
-			a.logError("marking tunnel disconnected", err)
+	session := &TunnelSession{
+		TunnelID:      record.ID,
+		Domain:        protocol.NormalizeHost(domain),
+		Conn:          ws,
+		MaxConcurrent: a.config.MaxConcurrentRequests,
+	}
+
+	prev := a.sessions.Set(protocol.NormalizeHost(domain), session)
+	if prev != nil {
+		prev.Conn.Close()
+	}
+
+	_ = a.store.MarkTunnelActive(r.Context(), session.TunnelID, r.RemoteAddr, r.UserAgent())
+
+	ws.Send(&protocol.Frame{
+		Type:      protocol.FrameType_REGISTERED,
+		TunnelId:  session.TunnelID,
+		Domain:    domain,
+		Config: &protocol.TunnelConfig{
+			MaxConcurrent:    int32(a.config.MaxConcurrentRequests),
+			RequestTimeoutMs: int32(a.config.DefaultRequestTimeout),
+			BackendTimeoutMs: int32(a.config.DefaultBackendTimeout),
+			Reconnect: &protocol.ReconnectConfig{
+				Enabled:        a.config.DefaultReconnectEnabled,
+				InitialDelayMs: int32(a.config.DefaultReconnectInitialDelay),
+				MaxDelayMs:     int32(a.config.DefaultReconnectMaxDelay),
+				Multiplier:     a.config.DefaultReconnectMultiplier,
+				MaxRetries:     int32(a.config.DefaultReconnectMaxRetries),
+				Jitter:         true,
+			},
+		},
+	})
+
+	log.Printf("Tunnel connected: domain=%s", domain)
+
+	for {
+		frame, err := ws.ReadFrame()
+		if err != nil {
+			break
 		}
-	}()
-
-	if err := session.Conn.ReadLoop(session.HandleFrame); err != nil {
-		log.Printf("Tunnel disconnected for %s: %v", record.Domain, err)
+		switch frame.GetType() {
+		case protocol.FrameType_PING:
+			ws.Send(&protocol.Frame{Type: protocol.FrameType_PONG})
+		case protocol.FrameType_REQUEST_ERROR:
+			req, ok := a.pending.Get(frame.GetRequestId())
+			if ok && req != nil {
+				req.ErrorCh <- &requestError{status: int(frame.GetStatus()), msg: frame.GetError()}
+				a.pending.Remove(frame.GetRequestId())
+			}
+		}
 	}
+
+	a.sessions.Delete(domain)
+	a.pending.CleanupByTunnel(session.TunnelID)
+	_ = a.store.MarkTunnelDisconnected(r.Context(), session.TunnelID)
+	log.Printf("Tunnel disconnected: domain=%s", domain)
 }
 
-func (a *App) handleTunnelWebSocketUpgrade(session *TunnelSession, requestID string, w http.ResponseWriter, r *http.Request, logEntry RequestResponseLog) {
-	startedAt := time.Now().UTC()
-	a.verbose("WS_UPGRADE_START %s %s (id=%s)", r.Method, buildRequestPath(r), requestID[:8])
+func (a *App) handleTunnelResponseWS(w http.ResponseWriter, r *http.Request) {
+	requestID := strings.TrimSpace(r.URL.Query().Get("request_id"))
+	domainKey := strings.TrimSpace(r.URL.Query().Get("domain_key"))
 
-	// Hijack the connection to tunnel WebSocket frames bidirectionally
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+	if requestID == "" || domainKey == "" {
+		http.Error(w, "request_id and domain_key required", http.StatusBadRequest)
 		return
 	}
 
-	// Send WebSocket upgrade frame to client
-	if err := session.Send(protocol.Frame{
-		Type:      protocol.FrameTypeWebSocketUpgrade,
-		ID:        requestID,
-		Method:    r.Method,
-		Path:      buildRequestPath(r),
-		Headers:   protocol.MergeForwardedHeaders(nil, r),
-		Timestamp: startedAt,
-	}); err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+	req, ok := a.pending.Get(requestID)
+	if !ok || req == nil {
+		http.Error(w, "request not found or expired", http.StatusNotFound)
 		return
 	}
 
-	// Wait for client to confirm upgrade
-	stream := newResponseStream()
-	session.RegisterPending(requestID, stream)
-	defer session.RemovePending(requestID)
-
-	var startFrame protocol.Frame
-	select {
-	case startFrame = <-stream.startCh:
-	case err := <-stream.errCh:
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	case <-session.Conn.Closed():
-		http.Error(w, "tunnel connection closed", http.StatusBadGateway)
-		return
-	case <-r.Context().Done():
-		return
-	}
-
-	if startFrame.Status != http.StatusSwitchingProtocols {
-		// Client couldn't upgrade — return the error response
-		protocol.ApplyHeaders(w.Header(), startFrame.Headers)
-		w.WriteHeader(startFrame.Status)
-		for chunk := range stream.bodyCh {
-			_, _ = w.Write(chunk)
-		}
-		return
-	}
-
-	// Upgrade successful — hijack and tunnel raw bytes
-	a.verbose("WS_UPGRADE_OK %s %s → 101 Switching Protocols", r.Method, buildRequestPath(r))
-	clientConn, bufReadWriter, err := hijacker.Hijack()
+	conn, err := tunnelUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		_ = session.Send(protocol.Frame{
-			Type:  protocol.FrameTypeWebSocketError,
-			ID:    requestID,
-			Error: err.Error(),
-		})
+		log.Printf("dedicated ws upgrade error: %v", err)
 		return
 	}
-	defer clientConn.Close()
 
-	// Write the 101 response to the client
-	if bufReadWriter != nil {
-		_ = bufReadWriter.Reader.Buffered()
-	}
-	responseStart := "HTTP/1.1 101 Switching Protocols\r\n"
-	for k, vals := range startFrame.Headers {
-		for _, v := range vals {
-			responseStart += k + ": " + v + "\r\n"
-		}
-	}
-	responseStart += "\r\n"
-	_, _ = clientConn.Write([]byte(responseStart))
+	ws := protocol.NewConnection(conn)
+	defer ws.Close()
 
-	// Bidirectional tunnel: client TCP <-> server WebSocket frames
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// Client -> Tunnel
-	var clientToServerBytes int64
-	go func() {
-		defer wg.Done()
+	// Stream request body
+	if req.BodyReader != nil {
 		buf := make([]byte, 32*1024)
 		for {
-			n, err := clientConn.Read(buf)
-			if err != nil {
-				a.verbose("WS_CLIENT_CLOSED %s → sent %s to client", buildRequestPath(r), formatBytes(clientToServerBytes))
-				_ = session.Send(protocol.Frame{
-					Type: protocol.FrameTypeWebSocketClose,
-					ID:   requestID,
+			n, err := req.BodyReader.Read(buf)
+			if n > 0 {
+				ws.Send(&protocol.Frame{
+					Type:      protocol.FrameType_BODY,
+					RequestId: requestID,
+					Chunk:     buf[:n],
 				})
-				return
 			}
-			clientToServerBytes += int64(n)
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
-			if err := session.Send(protocol.Frame{
-				Type:      protocol.FrameTypeWebSocketData,
-				ID:        requestID,
-				Chunk:     chunk,
-				Timestamp: time.Now().UTC(),
-			}); err != nil {
-				a.verbose("WS_SEND_ERR %s: %v", buildRequestPath(r), err)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
 				return
 			}
 		}
-	}()
-
-	// Tunnel -> Client
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case chunk, ok := <-stream.bodyCh:
-				if !ok {
-					return
-				}
-				if _, err := clientConn.Write(chunk); err != nil {
-					return
-				}
-			case <-stream.errCh:
-				return
-			case <-session.Conn.Closed():
-				return
-			case <-r.Context().Done():
-				return
-			}
-		}
-	}()
-
-	wg.Wait()
-}
-
-func (a *App) handleTunnelHTTP(session *TunnelSession, w http.ResponseWriter, r *http.Request) {
-	startedAt := time.Now().UTC()
-	requestID := protocol.GenerateID(16)
-	requestPath := buildRequestPath(r)
-	requestHeaders := protocol.MergeForwardedHeaders(nil, r)
-	requestCapture := NewBodyCapture(contentTypeFromHeaders(requestHeaders))
-
-	logEntry := RequestResponseLog{
-		ID:                 requestID,
-		TunnelID:           session.TunnelID,
-		Domain:             session.Domain,
-		Method:             r.Method,
-		Path:               requestPath,
-		RequestHeaders:     requestHeaders,
-		RequestContentType: contentTypeFromHeaders(requestHeaders),
-		StartedAt:          startedAt,
-	}
-
-	a.verbose("REQ %s %s (remote=%s, id=%s)", r.Method, requestPath, r.RemoteAddr, requestID[:8])
-
-	// Check for WebSocket upgrade
-	if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
-		a.verbose("WS_UPGRADE %s %s", r.Method, requestPath)
-		a.handleTunnelWebSocketUpgrade(session, requestID, w, r, logEntry)
-		return
-	}
-
-	var (
-		responseHeaders map[string][]string
-		responseCapture *BodyCapture
-		statusCode      int
-		responseErr     error
-	)
-
-	defer func() {
-		completedAt := time.Now().UTC()
-		logEntry.CompletedAt = &completedAt
-		logEntry.DurationMs = completedAt.Sub(startedAt).Milliseconds()
-		logEntry.StatusCode = statusCode
-		logEntry.RequestPreview = requestCapture.Preview()
-		logEntry.ResponseHeaders = responseHeaders
-		if responseCapture != nil {
-			logEntry.ResponsePreview = responseCapture.Preview()
-			logEntry.ResponseContentType = contentTypeFromHeaders(responseHeaders)
-		}
-		if responseErr != nil {
-			logEntry.ErrorMessage = responseErr.Error()
-		}
-		if err := a.store.RecordRequestLog(context.Background(), logEntry); err != nil {
-			a.logError("recording request log", err)
-		}
-		a.verbose("DONE %s %s → %d (%dms, %s req/%s resp)",
-			r.Method, requestPath, statusCode,
-			logEntry.DurationMs,
-			formatBytes(logEntry.RequestBytes),
-			formatBytes(logEntry.ResponseBytes))
-	}()
-
-	stream := newResponseStream()
-	session.RegisterPending(requestID, stream)
-	defer session.RemovePending(requestID)
-
-	cancelOnce := sync.Once{}
-	sendCancel := func() {
-		cancelOnce.Do(func() {
-			_ = session.Send(protocol.Frame{Type: protocol.FrameTypeRequestCancel, ID: requestID, Timestamp: time.Now().UTC()})
+		ws.Send(&protocol.Frame{
+			Type:      protocol.FrameType_BODY_END,
+			RequestId: requestID,
 		})
 	}
 
-	requestDone := make(chan struct{})
-	go func() {
-		select {
-		case <-r.Context().Done():
-			sendCancel()
-		case <-requestDone:
-		}
-	}()
-	defer close(requestDone)
-
-	if err := session.Send(protocol.Frame{
-		Type:      protocol.FrameTypeRequestStart,
-		ID:        requestID,
-		Method:    r.Method,
-		Path:      requestPath,
-		Headers:   requestHeaders,
-		Timestamp: startedAt,
-	}); err != nil {
-		statusCode = http.StatusBadGateway
-		responseErr = err
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	buffer := make([]byte, protocol.DefaultChunkSize)
+	// Read response
 	for {
-		readBytes, readErr := r.Body.Read(buffer)
-		if readBytes > 0 {
-			chunk := make([]byte, readBytes)
-			copy(chunk, buffer[:readBytes])
-			logEntry.RequestBytes += int64(readBytes)
-			requestCapture.Observe(chunk)
-			if err := session.Send(protocol.Frame{
-				Type:      protocol.FrameTypeRequestBody,
-				ID:        requestID,
-				Chunk:     chunk,
-				Timestamp: time.Now().UTC(),
-			}); err != nil {
-				statusCode = http.StatusBadGateway
-				responseErr = err
-				http.Error(w, err.Error(), http.StatusBadGateway)
-				return
-			}
-		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			statusCode = http.StatusBadRequest
-			responseErr = readErr
-			sendCancel()
-			http.Error(w, readErr.Error(), http.StatusBadRequest)
+		frame, err := ws.ReadFrame()
+		if err != nil {
+			req.ErrorCh <- err
+			a.pending.Remove(requestID)
 			return
 		}
-	}
 
-	if err := session.Send(protocol.Frame{Type: protocol.FrameTypeRequestEnd, ID: requestID, Timestamp: time.Now().UTC()}); err != nil {
-		statusCode = http.StatusBadGateway
-		responseErr = err
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	var startFrame protocol.Frame
-	select {
-	case startFrame = <-stream.startCh:
-	case responseErr = <-stream.errCh:
-		statusCode = httpStatusForError(responseErr)
-		http.Error(w, responseErr.Error(), statusCode)
-		return
-	case <-session.Conn.Closed():
-		responseErr = errors.New("tunnel connection closed")
-		statusCode = http.StatusBadGateway
-		http.Error(w, responseErr.Error(), statusCode)
-		return
-	case <-r.Context().Done():
-		responseErr = r.Context().Err()
-		statusCode = 499
-		sendCancel()
-		return
-	}
-
-	statusCode = startFrame.Status
-	responseHeaders = startFrame.Headers
-	responseCapture = NewBodyCapture(contentTypeFromHeaders(responseHeaders))
-	protocol.ApplyHeaders(w.Header(), responseHeaders)
-	w.WriteHeader(startFrame.Status)
-
-	flusher, canFlush := w.(http.Flusher)
-	if canFlush {
-		flusher.Flush()
-	}
-
-	for {
-		select {
-		case chunk, ok := <-stream.bodyCh:
-			if !ok {
-				return
+		switch frame.GetType() {
+		case protocol.FrameType_RESPONSE_START:
+			req.ResponseCh <- &PendingResponse{
+				Status:  int(frame.GetStatus()),
+				Headers: convertHeaders(frame.GetResponseHeaders()),
 			}
-			if len(chunk) == 0 {
-				continue
+		case protocol.FrameType_RESPONSE_BODY:
+			select {
+			case req.bodyCh <- frame.GetChunk():
+			default:
 			}
-			logEntry.ResponseBytes += int64(len(chunk))
-			responseCapture.Observe(chunk)
-			if _, err := w.Write(chunk); err != nil {
-				responseErr = err
-				sendCancel()
-				return
-			}
-			if canFlush {
-				flusher.Flush()
-			}
-		case responseErr = <-stream.errCh:
-			if responseErr == nil {
-				return
-			}
-			sendCancel()
+		case protocol.FrameType_RESPONSE_END:
+			close(req.bodyCh)
+			a.pending.Remove(requestID)
 			return
-		case <-session.Conn.Closed():
-			responseErr = errors.New("tunnel connection closed")
-			sendCancel()
-			return
-		case <-r.Context().Done():
-			responseErr = r.Context().Err()
-			sendCancel()
+		case protocol.FrameType_RESPONSE_ERROR:
+			req.ErrorCh <- &requestError{status: int(frame.GetStatus()), msg: frame.GetError()}
+			a.pending.Remove(requestID)
 			return
 		}
 	}
 }
 
+func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
+	host := protocol.NormalizeHost(r.Host)
+	log.Printf("handleTunnelHTTP: host=%q path=%s", host, r.URL.Path)
+
+	session, ok := a.sessions.Get(host)
+	if !ok {
+		// Try wildcard match
+		for domain, sess := range a.sessions.GetAll() {
+			if strings.HasSuffix(host, "."+domain) || host == domain {
+				session = sess
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			http.Error(w, "Tunnel not found", http.StatusNotFound)
+			return
+		}
+	}
+
+	// Check concurrent limit
+	if !session.CanAcceptRequest() {
+		http.Error(w, "Too many concurrent requests", http.StatusServiceUnavailable)
+		return
+	}
+	session.IncrementActive()
+	defer session.DecrementActive()
+
+	requestID := protocol.GenerateID(16)
+
+	if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
+		http.Error(w, "WebSocket upgrade not yet implemented", http.StatusNotImplemented)
+		return
+	}
+
+	bodyReader, bodyWriter := io.Pipe()
+	req := &PendingRequest{
+		ID:         requestID,
+		TunnelID:   session.TunnelID,
+		Method:     r.Method,
+		Path:       r.URL.RequestURI(),
+		Headers:    cloneHeaders(r.Header),
+		ContentLen: r.ContentLength,
+		BodyReader: bodyReader,
+		ResponseCh: make(chan *PendingResponse, 1),
+		ErrorCh:    make(chan error, 1),
+		bodyCh:     make(chan []byte, 64),
+		CreatedAt:  time.Now(),
+	}
+	a.pending.Add(req)
+
+	headers := make(map[string]*protocol.StringList)
+	for k, vals := range r.Header {
+		headers[k] = &protocol.StringList{Values: vals}
+	}
+
+	session.Conn.Send(&protocol.Frame{
+		Type:          protocol.FrameType_REQUEST,
+		RequestId:     requestID,
+		Method:        r.Method,
+		Path:          r.URL.RequestURI(),
+		Headers:       headers,
+		ContentLength: r.ContentLength,
+	})
+
+	if r.Body != nil && r.ContentLength > 0 {
+		go func() {
+			io.Copy(bodyWriter, r.Body)
+			bodyWriter.Close()
+		}()
+	} else {
+		bodyWriter.Close()
+	}
+
+	select {
+	case resp := <-req.ResponseCh:
+		for k, vals := range resp.Headers {
+			for _, v := range vals {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.Status)
+		for chunk := range req.bodyCh {
+			w.Write(chunk)
+		}
+	case err := <-req.ErrorCh:
+		if re, ok := err.(*requestError); ok {
+			http.Error(w, re.msg, re.status)
+		} else {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+		}
+	case <-r.Context().Done():
+	}
+
+	a.pending.Remove(requestID)
+}
+
+func (a *App) handleAdmin(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte("Admin panel"))
+}
+
+func (a *App) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+type requestError struct {
+	status int
+	msg    string
+}
+
+func (e *requestError) Error() string { return e.msg }
+
+func cloneHeaders(h http.Header) map[string][]string {
+	result := make(map[string][]string)
+	for k, vs := range h {
+		vals := make([]string, len(vs))
+		copy(vals, vs)
+		result[k] = vals
+	}
+	return result
+}
+
+func convertHeaders(h map[string]*protocol.StringList) map[string][]string {
+	result := make(map[string][]string)
+	for k, v := range h {
+		result[k] = v.GetValues()
+	}
+	return result
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	digits := ""
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	for n > 0 {
+		digits = string(rune('0'+n%10)) + digits
+		n /= 10
+	}
+	if neg {
+		digits = "-" + digits
+	}
+	return digits
+}
+
+func hashValue(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}

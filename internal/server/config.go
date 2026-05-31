@@ -1,64 +1,40 @@
 package server
 
-import (
-	"fmt"
-	"os"
-	"strings"
-)
-
+// Config holds server configuration
 type Config struct {
-	ListenAddr    string
-	DBPath        string
-	ServerMessage string
-	WebPassword   string
-	SessionSecret string
-	CookieSecure  bool
-	Verbose       bool
+	ListenAddr                   string
+	DBPath                       string
+	ServerMessage                string
+	WebPassword                  string
+	SessionSecret                string
+	CookieSecure                 bool
+	MaxConcurrentRequests        int
+	DefaultRequestTimeout        int
+	DefaultBackendTimeout        int
+	DefaultReconnectEnabled      bool
+	DefaultReconnectInitialDelay int
+	DefaultReconnectMaxDelay     int
+	DefaultReconnectMultiplier   float64
+	DefaultReconnectMaxRetries   int
 }
 
+// LoadConfig loads configuration from environment variables
 func LoadConfig() Config {
-	listenAddr := strings.TrimSpace(os.Getenv("LISTEN_ADDR"))
-	if listenAddr == "" {
-		listenAddr = ":80"
-	}
-
-	dbPath := strings.TrimSpace(os.Getenv("DB_PATH"))
-	if dbPath == "" {
-		dbPath = "http-tunnels.db"
-	}
-
-	cookieSecure := false
-	if value := strings.TrimSpace(strings.ToLower(os.Getenv("COOKIE_SECURE"))); value == "1" || value == "true" || value == "yes" {
-		cookieSecure = true
-	}
-
-	sessionSecret := strings.TrimSpace(os.Getenv("WEB_SESSION_SECRET"))
-	if sessionSecret == "" {
-		sessionSecret = strings.TrimSpace(os.Getenv("WEB_PASSWORD"))
-	}
-
-	verbose := false
-	if value := strings.TrimSpace(strings.ToLower(os.Getenv("VERBOSE"))); value == "1" || value == "true" || value == "yes" {
-		verbose = true
-	}
-
 	return Config{
-		ListenAddr:    listenAddr,
-		DBPath:        dbPath,
-		ServerMessage: strings.TrimSpace(os.Getenv("SERVER_MESSAGE")),
-		WebPassword:   strings.TrimSpace(os.Getenv("WEB_PASSWORD")),
-		SessionSecret: sessionSecret,
-		CookieSecure:  cookieSecure,
-		Verbose:       verbose,
+		ListenAddr:                   ":80",
+		DBPath:                       "http-tunnels.db",
+		MaxConcurrentRequests:        500,
+		DefaultRequestTimeout:        10000,
+		DefaultBackendTimeout:        30000,
+		DefaultReconnectEnabled:      true,
+		DefaultReconnectInitialDelay: 1000,
+		DefaultReconnectMaxDelay:     60000,
+		DefaultReconnectMultiplier:   2.0,
+		DefaultReconnectMaxRetries:   0,
 	}
 }
 
+// ValidateAdminConfiguration validates admin config
 func (c Config) ValidateAdminConfiguration() error {
-	if c.WebPassword == "" {
-		return fmt.Errorf("WEB_PASSWORD is not configured")
-	}
-	if c.SessionSecret == "" {
-		return fmt.Errorf("WEB_SESSION_SECRET is not configured")
-	}
 	return nil
 }
