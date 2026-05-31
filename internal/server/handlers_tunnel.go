@@ -17,6 +17,11 @@ var tunnelUpgrader = websocket.Upgrader{
 	CheckOrigin:       func(r *http.Request) bool { return true },
 }
 
+var tunnelResponseUpgrader = websocket.Upgrader{
+	EnableCompression: false, // disable compression for dedicated WS (binary streaming)
+	CheckOrigin:       func(r *http.Request) bool { return true },
+}
+
 func (a *App) handlePing(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ping":"pong","active_tunnels":` + itoa(a.sessions.Count()) + `}`))
@@ -162,7 +167,7 @@ func (a *App) handleTunnelResponseWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := tunnelUpgrader.Upgrade(w, r, nil)
+	conn, err := tunnelResponseUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("dedicated ws upgrade error: %v", err)
 		return
@@ -212,10 +217,7 @@ func (a *App) handleTunnelResponseWS(w http.ResponseWriter, r *http.Request) {
 				Headers: convertHeaders(frame.GetResponseHeaders()),
 			}
 		case protocol.FrameType_RESPONSE_BODY:
-			select {
-			case req.bodyCh <- frame.GetChunk():
-			default:
-			}
+			req.bodyCh <- frame.GetChunk()
 		case protocol.FrameType_RESPONSE_END:
 			close(req.bodyCh)
 			a.pending.Remove(requestID)
@@ -312,7 +314,7 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 		BodyReader: bodyReader,
 		ResponseCh: make(chan *PendingResponse, 1),
 		ErrorCh:    make(chan error, 1),
-		bodyCh:     make(chan []byte, 256),
+		bodyCh:     make(chan []byte, 1024),
 		CreatedAt:  time.Now(),
 		LogEntry:   logEntry,
 	}
