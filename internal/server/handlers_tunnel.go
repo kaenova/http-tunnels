@@ -1,8 +1,6 @@
 package server
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log"
@@ -324,15 +322,6 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 	a.pending.Remove(requestID)
 }
 
-func (a *App) handleAdmin(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Admin panel"))
-}
-
-func (a *App) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok"}`))
-}
-
 type requestError struct {
 	status int
 	msg    string
@@ -376,9 +365,4 @@ func itoa(n int) string {
 		digits = "-" + digits
 	}
 	return digits
-}
-
-func hashValue(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
 }
