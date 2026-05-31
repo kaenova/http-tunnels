@@ -312,7 +312,7 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 		BodyReader: bodyReader,
 		ResponseCh: make(chan *PendingResponse, 1),
 		ErrorCh:    make(chan error, 1),
-		bodyCh:     make(chan []byte, 64),
+		bodyCh:     make(chan []byte, 256),
 		CreatedAt:  time.Now(),
 		LogEntry:   logEntry,
 	}
@@ -365,10 +365,19 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.WriteHeader(resp.Status)
+
+		flusher, canFlush := w.(http.Flusher)
+		if canFlush {
+			flusher.Flush()
+		}
+
 		for chunk := range req.bodyCh {
 			logEntry.ResponseBytes += int64(len(chunk))
 			responseCapture.Observe(chunk)
 			w.Write(chunk)
+			if canFlush {
+				flusher.Flush()
+			}
 		}
 	case err := <-req.ErrorCh:
 		responseErr = err
