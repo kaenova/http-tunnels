@@ -32,6 +32,7 @@ type TestHarness struct {
 
 // TunnelClient represents a registered tunnel
 type TunnelClient struct {
+	ID         string
 	Domain     string
 	DomainKey  string
 	TunnelID   string
@@ -222,6 +223,7 @@ func (h *TestHarness) CreateTunnel(t *testing.T, subdomain string) *TunnelClient
 	}
 
 	tc := &TunnelClient{
+		ID:         result["id"].(string),
 		Domain:     result["domain"].(string),
 		DomainKey:  result["domain_key"].(string),
 		BackendURL: h.Backend.URL,

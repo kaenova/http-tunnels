@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -282,7 +284,7 @@ func (s *Store) migrate() error {
 func (s *Store) CreateTunnel(ctx context.Context, requestedSubdomain, domain, domainKeyHash, remoteAddr, userAgent string) (TunnelRecord, error) {
 	now := time.Now().UTC()
 	record := TunnelRecord{
-		ID:                 generateTunnelID(),
+		ID:                 stableTunnelID(domain),
 		Domain:             domain,
 		RequestedSubdomain: requestedSubdomain,
 		State:              "pending",
@@ -293,14 +295,28 @@ func (s *Store) CreateTunnel(ctx context.Context, requestedSubdomain, domain, do
 
 	err := s.execContextBusyRetry(ctx, `
 		INSERT INTO tunnels (
-			id, domain, requested_subdomain, domain_key_hash, state, created_at, remote_addr, user_agent
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			id, domain, requested_subdomain, domain_key_hash, state, created_at, connected_at, disconnected_at, last_activity_at, remote_addr, user_agent, deleted_at
+		) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, NULL)
+		ON CONFLICT(id) DO UPDATE SET
+			domain = excluded.domain,
+			requested_subdomain = excluded.requested_subdomain,
+			domain_key_hash = excluded.domain_key_hash,
+			state = 'pending',
+			connected_at = NULL,
+			disconnected_at = NULL,
+			remote_addr = excluded.remote_addr,
+			user_agent = excluded.user_agent,
+			deleted_at = NULL
 	`, record.ID, record.Domain, nullableString(record.RequestedSubdomain), domainKeyHash, record.State, record.CreatedAt, nullableString(record.RemoteAddr), nullableString(record.UserAgent))
 	if err != nil {
 		return TunnelRecord{}, fmt.Errorf("creating tunnel failed: %w", err)
 	}
 
-	return record, nil
+	stored, err := s.GetTunnelByID(ctx, record.ID)
+	if err != nil {
+		return TunnelRecord{}, fmt.Errorf("loading tunnel after create failed: %w", err)
+	}
+	return stored, nil
 }
 
 func (s *Store) DomainExists(ctx context.Context, domain string) (bool, error) {
@@ -953,8 +969,10 @@ func unmarshalHeaders(payload string) map[string][]string {
 	return headers
 }
 
-func generateTunnelID() string {
-	return protocol.GenerateID(16)
+func stableTunnelID(domain string) string {
+	normalized := protocol.NormalizeHost(domain)
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
 }
 
 func boolToInt(value bool) int {

@@ -111,7 +111,7 @@ Stores tunnel registrations and current state.
 
 Key fields:
 
-- `id`
+- `id` - stable hash of the normalized full domain; reused across reconnects for the same domain so admin analytics stay consolidated
 - `domain`
 - `requested_subdomain`
 - `domain_key_hash`
