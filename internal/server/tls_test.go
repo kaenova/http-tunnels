@@ -20,7 +20,7 @@ func TestGenerateSelfSignedTLSCertificateIncludesTunnelSubjects(t *testing.T) {
 	assertContainsIP(t, leaf.IPAddresses, net.ParseIP("127.0.0.1"))
 }
 
-func TestGenerateSelfSignedTLSCertificateForLocalhostDoesNotAddWildcard(t *testing.T) {
+func TestGenerateSelfSignedTLSCertificateForLocalhostIncludesWildcard(t *testing.T) {
 	cert, err := generateSelfSignedTLSCertificate("localhost")
 	if err != nil {
 		t.Fatalf("generate self-signed certificate: %v", err)
@@ -28,11 +28,7 @@ func TestGenerateSelfSignedTLSCertificateForLocalhostDoesNotAddWildcard(t *testi
 	leaf := certificateLeaf(t, cert)
 
 	assertContainsString(t, leaf.DNSNames, "localhost")
-	for _, dnsName := range leaf.DNSNames {
-		if dnsName == "*.localhost" {
-			t.Fatalf("did not expect wildcard localhost SAN")
-		}
-	}
+	assertContainsString(t, leaf.DNSNames, "*.localhost")
 }
 
 func certificateLeaf(t *testing.T, cert tls.Certificate) *x509.Certificate {

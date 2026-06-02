@@ -104,7 +104,9 @@ func serverCertificateSubjects(tunnelDomain string) ([]string, []net.IP) {
 	dnsNames := []string{"localhost"}
 	ipAddresses := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
 
-	if domain != "" && domain != "localhost" {
+	if domain == "localhost" {
+		dnsNames = appendUniqueString(dnsNames, "*.localhost")
+	} else if domain != "" {
 		if ip := net.ParseIP(domain); ip != nil {
 			if !containsIP(ipAddresses, ip) {
 				ipAddresses = append(ipAddresses, ip)
