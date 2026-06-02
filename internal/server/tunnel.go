@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -178,6 +179,7 @@ func (s *TunnelSession) writeLoop() {
 			return
 		}
 		if err := s.Conn.Send(frame); err != nil {
+			log.Printf("Tunnel websocket write failed: domain=%s tunnel_id=%s err=%v", s.Domain, s.TunnelID, err)
 			s.Close()
 			return
 		}
@@ -194,6 +196,7 @@ func (s *TunnelSession) heartbeatLoop() {
 			return
 		case <-ticker.C:
 			if s.shouldCloseForMissedPong() {
+				log.Printf("Tunnel websocket heartbeat timed out: domain=%s tunnel_id=%s", s.Domain, s.TunnelID)
 				s.Close()
 				return
 			}

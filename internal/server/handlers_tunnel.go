@@ -76,16 +76,23 @@ func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("Tunnel websocket upgrade requested: domain=%s remote=%s", domain, r.RemoteAddr)
 	conn, err := tunnelUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("ws upgrade error: %v", err)
+		log.Printf("Tunnel websocket upgrade failed: domain=%s remote=%s err=%v", domain, r.RemoteAddr, err)
 		return
 	}
 
 	ws := protocol.NewConnection(conn)
 
 	frame, err := ws.ReadFrame()
-	if err != nil || frame.GetType() != protocol.FrameType_REGISTER {
+	if err != nil {
+		log.Printf("Tunnel websocket register read failed: domain=%s remote=%s err=%v", domain, r.RemoteAddr, err)
+		_ = ws.Close()
+		return
+	}
+	if frame.GetType() != protocol.FrameType_REGISTER {
+		log.Printf("Tunnel websocket register frame invalid: domain=%s remote=%s type=%v", domain, r.RemoteAddr, frame.GetType())
 		_ = ws.Close()
 		return
 	}
@@ -119,13 +126,14 @@ func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 		_ = session.Close()
 		return
 	}
-	log.Printf("Tunnel connected: domain=%s", domain)
+	log.Printf("Tunnel websocket connected: domain=%s tunnel_id=%s remote=%s", domain, session.TunnelID, r.RemoteAddr)
 	session.MarkActivity()
 	session.Start()
 
 	for {
 		frame, err := ws.ReadFrame()
 		if err != nil {
+			log.Printf("Tunnel websocket disconnected: domain=%s tunnel_id=%s remote=%s err=%v", domain, session.TunnelID, r.RemoteAddr, err)
 			break
 		}
 		session.MarkActivity()
@@ -169,7 +177,7 @@ func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 	a.pending.FailByTunnel(session.TunnelID, errors.New("tunnel connection closed"))
 	_ = session.Close()
 	_ = a.store.MarkTunnelDisconnected(r.Context(), session.TunnelID)
-	log.Printf("Tunnel disconnected: domain=%s", domain)
+	log.Printf("Tunnel session cleaned up: domain=%s tunnel_id=%s remote=%s", domain, session.TunnelID, r.RemoteAddr)
 }
 
 func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {

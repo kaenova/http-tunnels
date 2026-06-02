@@ -30,6 +30,7 @@ type App struct {
 	backendURL   *url.URL
 	httpClient   *http.Client
 	ws           *protocol.Connection
+	connected    bool
 	outbound     *protocol.FrameScheduler
 	done         chan struct{}
 	closeOnce    sync.Once
@@ -94,6 +95,7 @@ func Run(ctx context.Context, options Options) error {
 		return err
 	}
 
+	fmt.Fprintf(os.Stderr, "[http-tunnels] websocket connected, final domain: %s\n", registration.Domain)
 	log.Printf("Connected! Tunnel: %s", registration.Domain)
 	log.Printf("Proxying to: %s", backendURL.String())
 
@@ -184,10 +186,12 @@ func (a *App) connectAndRegister(ctx context.Context, registration *createTunnel
 	)
 
 	dialer := websocket.Dialer{EnableCompression: true}
+	log.Printf("Dialing tunnel websocket: %s", wsURL)
 	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("websocket connection failed: %w", err)
 	}
+	log.Printf("Tunnel websocket connected: server=%s domain=%s", a.serverURL.Host, registration.Domain)
 	ws := protocol.NewConnection(conn)
 	if err := ws.Send(&protocol.Frame{
 		Type:      protocol.FrameType_REGISTER,
@@ -209,6 +213,7 @@ func (a *App) connectAndRegister(ctx context.Context, registration *createTunnel
 	}
 	registration.ID = frame.GetTunnelId()
 	a.ws = ws
+	a.connected = true
 	a.markActivity()
 	return nil
 }
@@ -222,6 +227,7 @@ func (a *App) readLoop() error {
 				return nil
 			default:
 			}
+			log.Printf("Tunnel websocket disconnected: %v", err)
 			return err
 		}
 		a.markActivity()
@@ -424,6 +430,7 @@ func (a *App) writeLoop() {
 			return
 		}
 		if err := a.ws.Send(frame); err != nil {
+			log.Printf("Tunnel websocket write failed: %v", err)
 			a.Close()
 			return
 		}
@@ -440,7 +447,7 @@ func (a *App) heartbeatLoop() {
 			return
 		case <-ticker.C:
 			if a.shouldCloseForMissedPong() {
-				log.Printf("Tunnel heartbeat timed out")
+				log.Printf("Tunnel heartbeat timed out, closing websocket")
 				a.Close()
 				return
 			}
@@ -457,6 +464,10 @@ func (a *App) heartbeatLoop() {
 
 func (a *App) Close() {
 	a.closeOnce.Do(func() {
+		if a.connected {
+			fmt.Fprintln(os.Stderr, "[http-tunnels] websocket disconnected")
+		}
+		log.Printf("Closing tunnel websocket")
 		close(a.done)
 		a.outbound.Close()
 		if a.ws != nil {
