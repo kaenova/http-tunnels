@@ -7,6 +7,7 @@ type TunnelRecord struct {
 	Domain             string     `json:"domain"`
 	RequestedSubdomain string     `json:"requestedSubdomain,omitempty"`
 	State              string     `json:"state"`
+	Transport          string     `json:"transport,omitempty"`
 	CreatedAt          time.Time  `json:"createdAt"`
 	ConnectedAt        *time.Time `json:"connectedAt,omitempty"`
 	DisconnectedAt     *time.Time `json:"disconnectedAt,omitempty"`
@@ -61,11 +62,13 @@ type TunnelCreationLog struct {
 }
 
 type DashboardSummary struct {
-	ActiveTunnels        int64 `json:"activeTunnels"`
-	ActiveTraffic        int64 `json:"activeTraffic"`
-	RegisteredTunnels    int64 `json:"registeredTunnels"`
-	TotalRequests        int64 `json:"totalRequests"`
-	DataTransferredBytes int64 `json:"dataTransferredBytes"`
+	ActiveTunnels          int64 `json:"activeTunnels"`
+	ActiveHTTP2Tunnels     int64 `json:"activeHttp2Tunnels"`
+	ActiveWebSocketTunnels int64 `json:"activeWebsocketTunnels"`
+	ActiveTraffic          int64 `json:"activeTraffic"`
+	RegisteredTunnels      int64 `json:"registeredTunnels"`
+	TotalRequests          int64 `json:"totalRequests"`
+	DataTransferredBytes   int64 `json:"dataTransferredBytes"`
 }
 
 type TunnelListResponse struct {
@@ -115,6 +118,8 @@ type TunnelDetailResponse struct {
 
 type DashboardResponse struct {
 	Summary             DashboardSummary     `json:"summary"`
+	StatusChart         []StatusChartPoint   `json:"statusChart"`
+	TrafficChart        []TrafficChartPoint  `json:"trafficChart"`
 	ActiveTunnels       []TunnelRecord       `json:"activeTunnels"`
 	RecentRequests      []RequestResponseLog `json:"recentRequests"`
 	RecentTunnelCreates []TunnelCreationLog  `json:"recentTunnelCreates"`

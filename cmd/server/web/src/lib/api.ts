@@ -9,6 +9,7 @@ export type TunnelRecord = {
   domain: string
   requestedSubdomain?: string
   state: string
+  transport?: string
   createdAt: string
   connectedAt?: string
   disconnectedAt?: string
@@ -53,8 +54,37 @@ export type TunnelCreationLog = {
   createdAt: string
 }
 
+export type ChartGranularity =
+  | "minute"
+  | "15-minutes"
+  | "hourly"
+  | "daily"
+  | "weekly"
+  | "monthly"
+
+export type ChartRangePreset =
+  | "last-10-minutes"
+  | "last-15-minutes"
+  | "last-30-minutes"
+  | "last-60-minutes"
+  | "last-hour"
+  | "last-3-hours"
+  | "last-8-hours"
+  | "last-24-hours"
+  | "last-24-days"
+  | "custom"
+
+export type ChartFilters = {
+  granularity: ChartGranularity
+  range: ChartRangePreset
+  start?: string
+  end?: string
+}
+
 export type DashboardSummary = {
   activeTunnels: number
+  activeHttp2Tunnels: number
+  activeWebsocketTunnels: number
   activeTraffic: number
   registeredTunnels: number
   totalRequests: number
@@ -63,6 +93,8 @@ export type DashboardSummary = {
 
 export type DashboardResponse = {
   summary: DashboardSummary
+  statusChart: StatusChartPoint[]
+  trafficChart: TrafficChartPoint[]
   activeTunnels: TunnelRecord[]
   recentRequests: RequestResponseLog[]
   recentTunnelCreates: TunnelCreationLog[]
@@ -181,7 +213,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ password }),
     }),
-  dashboard: () => request<DashboardResponse>("/api/admin/dashboard"),
+  dashboard: (charts: ChartFilters) =>
+    request<DashboardResponse>(
+      `/api/admin/dashboard${buildQueryString({
+        granularity: charts.granularity,
+        range: charts.range,
+        start: charts.start,
+        end: charts.end,
+      })}`
+    ),
   listRequestActivity: (
     page: number,
     pageSize: number,
@@ -203,9 +243,21 @@ export const api = {
     request<TunnelListResponse>(
       `/api/admin/tunnels${buildQueryString({ page, pageSize })}`
     ),
-  tunnelDetail: (tunnelId: string, page: number, pageSize: number) =>
+  tunnelDetail: (
+    tunnelId: string,
+    page: number,
+    pageSize: number,
+    charts: ChartFilters
+  ) =>
     request<TunnelDetailResponse>(
-      `/api/admin/tunnels/${tunnelId}${buildQueryString({ page, pageSize })}`
+      `/api/admin/tunnels/${tunnelId}${buildQueryString({
+        page,
+        pageSize,
+        granularity: charts.granularity,
+        range: charts.range,
+        start: charts.start,
+        end: charts.end,
+      })}`
     ),
   deleteTunnel: (tunnelId: string) =>
     request<{ ok: boolean }>(`/api/admin/tunnels/${tunnelId}`, {

@@ -25,7 +25,9 @@ The Go server owns:
 
 - `/ping`
 - `/new_tunnel`
-- `/tunnel`
+- `/tunnel` (websocket fallback)
+- `/tunnel/h2` (HTTP/2 worker stream alias)
+- `/tunnel/h2/stream` (HTTP/2 worker stream endpoint)
 - `/api/admin/*`
 - `/admin/*`
 - `/assets/*`
@@ -64,8 +66,9 @@ Do not rely on the frontend alone for protection.
 The current pattern is:
 
 1. Go server redirects unauthenticated `/admin/*` requests to `/admin/auth/login`.
-2. React Router also checks the admin session via `/api/admin/auth/session`.
-3. Protected admin routes render under `AdminLayout` only after the session is confirmed.
+2. The exact admin host root `/` also redirects into admin (`/admin/auth/login` or `/admin` when already authenticated).
+3. React Router also checks the admin session via `/api/admin/auth/session`.
+4. Protected admin routes render under `AdminLayout` only after the session is confirmed.
 
 Both layers should remain aligned.
 

@@ -27,13 +27,20 @@ const chartConfig = {
   },
 } satisfies ChartConfig
 
-export function TrafficChartCard({ data }: { data: TrafficChartPoint[] }) {
+export function TrafficChartCard({
+  data,
+  description,
+}: {
+  data: TrafficChartPoint[]
+  description?: string
+}) {
   return (
     <Card>
       <CardHeader>
         <CardTitle>Inbound and outbound traffic</CardTitle>
         <CardDescription>
-          Bytes transferred through the tunnel over the last 7 days.
+          {description ??
+            "Bytes transferred through the tunnel over the selected time window."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -52,7 +59,7 @@ export function TrafficChartCard({ data }: { data: TrafficChartPoint[] }) {
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={(value) => value.slice(5)}
+              minTickGap={24}
             />
             <ChartTooltip
               cursor={false}

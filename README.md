@@ -14,10 +14,10 @@ If you want to support the hosted public tunnel service, consider donating via [
 ## Features
 
 - Create tunnels with a custom or random subdomain.
-- Stream requests and responses through a single websocket tunnel without buffering the full body first.
+- Stream requests and responses through a long-lived tunnel, preferring HTTP/2 with native worker streams on one reused H2 connection and falling back to websocket when needed, without buffering the full body first.
 - Support **SSE / event-stream** workloads.
 - Support **binary streaming** for file downloads and other non-text payloads.
-- Fairly interleave concurrent streamed responses with round-robin websocket scheduling.
+- Fairly interleave concurrent streamed responses with round-robin tunnel scheduling.
 - Persist tunnel registrations, tunnel creation attempts, and request-response analytics.
 - Browse active tunnels and detailed logs from `/admin`.
 - Authenticate the admin dashboard with `WEB_PASSWORD`.
@@ -30,9 +30,9 @@ If you want to support the hosted public tunnel service, consider donating via [
 - `http_tunnels.go` - CLI entrypoint for the tunnel client.
 - `cmd/server` - tunnel server entrypoint and embedded admin web assets.
 - `cmd/server/web` - Bun/Vite React admin dashboard source.
-- `internal/client` - tunnel client logic, request/response multiplexing, and reconnect helpers.
+- `internal/client` - tunnel client logic, HTTP/2 worker-stream transport, websocket fallback, and reconnect helpers.
 - `internal/server` - tunnel server, admin API, auth, and SQLite store.
-- `internal/protocol` - shared tunnel websocket streaming protocol.
+- `internal/protocol` - websocket frame protocol plus the H2-native worker-stream protocol.
 - `.agents/guidelines` - implementation patterns for this repository.
 
 Before changing the codebase, read `.agents/guidelines/README.md` and follow the documented patterns.
@@ -229,9 +229,9 @@ Main admin routes:
 
 ## Streaming behavior
 
-The tunnel protocol now streams request and response bodies in chunks over a single long-lived websocket tunnel.
+The tunnel protocol now streams request and response bodies in chunks over a long-lived tunnel connection. The client prefers HTTP/2, keeps a control stream for registration and heartbeat, and uses native HTTP/2 request streams for concurrent tunneled traffic. When HTTP/2 is unavailable, it automatically falls back to websocket.
 
-The client and server keep that websocket alive with heartbeat `PING` / `PONG` frames during idle periods, and the client schedules concurrent response streams in round-robin order so one large response cannot monopolize the tunnel.
+The client and server keep the active tunnel alive with heartbeat `PING` / `PONG` frames during idle periods. Websocket traffic still uses round-robin frame scheduling so one large response cannot monopolize the tunnel, while HTTP/2 traffic uses native H2 multiplexing across concurrent request streams.
 
 That means the service can forward:
 

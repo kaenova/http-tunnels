@@ -23,11 +23,11 @@ Keep page-level queries inside the page component unless the same query logic is
 Current stable query keys:
 
 - `['admin-session']`
-- `['dashboard']`
+- `['dashboard', chartFilters]`
 - `['request-activity', page, pageSize, filters]`
 - `['request-activity-detail', requestId]`
 - `['tunnels', page, pageSize]`
-- `['tunnel-detail', tunnelId, page, pageSize]`
+- `['tunnel-detail', tunnelId, page, pageSize, chartFilters]`
 
 ### Polling
 
@@ -101,6 +101,17 @@ When adding a new admin API:
 2. add the frontend `api.ts` helper
 3. use `useQuery` / `useMutation` in the page or shared hook
 4. define the invalidation behavior explicitly
+
+### Chart filter pattern
+
+Dashboard and tunnel-detail charts use shared query params:
+
+- `granularity`
+- `range`
+- `start`
+- `end`
+
+Keep chart aggregation server-side and include the applied chart filter object in the React Query key so polling stays aligned with the selected view.
 
 ---
 

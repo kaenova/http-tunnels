@@ -55,13 +55,14 @@ func NewApp(config Config, assets fs.FS) (*App, error) {
 	return app, nil
 }
 
-// Serve starts the HTTP server on the given listener
-func (a *App) Serve(listener net.Listener) error {
+func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/ping", a.handlePing)
 	mux.HandleFunc("/new_tunnel", a.handleNewTunnel)
 	mux.HandleFunc("/tunnel", a.handleTunnelWS)
+	mux.HandleFunc("/tunnel/h2", a.handleTunnelH2)
+	mux.HandleFunc("/tunnel/h2/stream", a.handleTunnelH2Stream)
 
 	// Static assets (referenced by admin SPA at root paths)
 	mux.HandleFunc("/assets/", a.handleAssets)
@@ -76,9 +77,13 @@ func (a *App) Serve(listener net.Listener) error {
 
 	// Catch-all for tunnel HTTP proxy
 	mux.HandleFunc("/", a.handleTunnelHTTP)
+	return mux
+}
 
+// Serve starts the HTTP server on the given listener
+func (a *App) Serve(listener net.Listener) error {
 	a.server = &http.Server{
-		Handler:           mux,
+		Handler:           a.Handler(),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 
@@ -239,6 +244,24 @@ func (a *App) isAdminHost(r *http.Request) bool {
 	host := normalizeRequestHost(r.Host)
 	adminHost := normalizeRequestHost(a.config.TunnelDomain)
 	return host == adminHost
+}
+
+func (a *App) shouldRedirectAdminHostRoot(r *http.Request) bool {
+	if !a.isAdminHost(r) || r == nil {
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	return r.URL.Path == "/" || strings.TrimSpace(r.URL.Path) == ""
+}
+
+func (a *App) redirectAdminHostRoot(w http.ResponseWriter, r *http.Request) {
+	target := "/admin/auth/login"
+	if a.isAdminAuthenticated(r) {
+		target = "/admin"
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 func (a *App) serveAdminIndex(w http.ResponseWriter, r *http.Request) {

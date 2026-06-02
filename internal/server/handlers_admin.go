@@ -152,7 +152,13 @@ func (a *App) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := a.store.GetDashboard(r.Context())
+	charts, err := parseChartQueryOptions(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	response, err := a.store.GetDashboard(r.Context(), charts)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
@@ -232,7 +238,12 @@ func (a *App) handleTunnelDetailAPI(w http.ResponseWriter, r *http.Request, suff
 	switch r.Method {
 	case http.MethodGet:
 		page, pageSize := parsePaginationParams(r)
-		response, err := a.store.GetTunnelDetail(r.Context(), tunnelID, page, pageSize)
+		charts, err := parseChartQueryOptions(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		response, err := a.store.GetTunnelDetail(r.Context(), tunnelID, page, pageSize, charts)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				http.NotFound(w, r)

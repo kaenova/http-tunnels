@@ -11,6 +11,11 @@ import { toast } from "sonner"
 
 import type { TunnelRecord } from "@/lib/api"
 import { api, ApiError } from "@/lib/api"
+import {
+  chartFiltersDescription,
+  defaultChartFilters,
+  normalizeChartFilters,
+} from "@/lib/chart-options"
 import { formatBytes, formatCount } from "@/lib/format"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
@@ -19,14 +24,19 @@ import { RecentRequestTable } from "@/components/recent-request-table"
 import { TunnelTable } from "@/components/tunnel-table"
 import { DeleteTunnelDialog } from "@/components/delete-tunnel-dialog"
 import { PageLoading } from "@/components/page-loading"
+import { ChartFiltersCard } from "@/components/charts/chart-filters-card"
+import { StatusChartCard } from "@/components/charts/status-chart-card"
+import { TrafficChartCard } from "@/components/charts/traffic-chart-card"
 
 export function DashboardPage() {
   const queryClient = useQueryClient()
   const [selectedTunnel, setSelectedTunnel] = useState<TunnelRecord | null>(null)
+  const [chartFilters, setChartFilters] = useState(defaultChartFilters)
+  const [draftChartFilters, setDraftChartFilters] = useState(defaultChartFilters)
 
   const dashboardQuery = useQuery({
-    queryKey: ["dashboard"],
-    queryFn: api.dashboard,
+    queryKey: ["dashboard", chartFilters],
+    queryFn: () => api.dashboard(chartFilters),
     refetchInterval: 5000,
   })
 
@@ -56,6 +66,18 @@ export function DashboardPage() {
         title: "Active connections",
         value: formatCount(summary.activeTunnels),
         description: "Currently connected tunnel clients.",
+        icon: NetworkIcon,
+      },
+      {
+        title: "HTTP/2 active",
+        value: formatCount(summary.activeHttp2Tunnels),
+        description: "Active tunnels currently using the preferred HTTP/2 transport.",
+        icon: NetworkIcon,
+      },
+      {
+        title: "Websocket fallback",
+        value: formatCount(summary.activeWebsocketTunnels),
+        description: "Active tunnels currently running on websocket fallback.",
         icon: NetworkIcon,
       },
       {
@@ -100,6 +122,8 @@ export function DashboardPage() {
     )
   }
 
+  const chartDescription = chartFiltersDescription(chartFilters)
+
   return (
     <div className="flex flex-col">
       <PageHeader
@@ -108,10 +132,31 @@ export function DashboardPage() {
         breadcrumbs={[{ label: "Admin", href: "/admin" }, { label: "Dashboard" }]}
       />
       <div className="flex flex-col gap-6 p-6">
-        <div className="grid gap-4 lg:grid-cols-5">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
           {metrics.map((metric) => (
             <MetricCard key={metric.title} {...metric} />
           ))}
+        </div>
+
+        <ChartFiltersCard
+          value={draftChartFilters}
+          onChange={setDraftChartFilters}
+          onApply={() => setChartFilters(normalizeChartFilters(draftChartFilters))}
+          onReset={() => {
+            setDraftChartFilters(defaultChartFilters)
+            setChartFilters(defaultChartFilters)
+          }}
+        />
+
+        <div className="grid gap-6 xl:grid-cols-2">
+          <StatusChartCard
+            data={dashboardQuery.data.statusChart}
+            description={`Total status-code volume across all tunnels · ${chartDescription}`}
+          />
+          <TrafficChartCard
+            data={dashboardQuery.data.trafficChart}
+            description={`Total inbound and outbound tunnel traffic · ${chartDescription}`}
+          />
         </div>
 
         <TunnelTable

@@ -8,6 +8,11 @@ The repository is split into three main runtime surfaces:
 2. **Tunnel server** (`cmd/server` → `internal/server`)
 3. **Admin dashboard** (`cmd/server/web`)
 
+The tunnel transport is now **HTTP/2-first with websocket fallback**.
+
+- **Websocket** keeps the existing protobuf frame protocol and round-robin scheduler.
+- **HTTP/2** now uses a separate H2-native worker-stream protocol instead of reusing websocket control/session semantics.
+
 The Go server embeds the built admin dashboard assets from `cmd/server/web/dist`.
 
 ---
@@ -17,10 +22,11 @@ The Go server embeds the built admin dashboard assets from `cmd/server/web/dist`
 The client:
 
 - registers a new tunnel with `POST /new_tunnel`
-- connects to the server websocket at `/tunnel`
-- receives streamed request frames from the server
-- forwards them to the local destination server
-- streams response frames back to the server
+- prefers native HTTP/2 worker streams at `/tunnel/h2/stream` when HTTP/2 is available
+- keeps a small pool of idle HTTP/2 worker streams open on one reused H2 connection
+- falls back to the websocket tunnel at `/tunnel` when HTTP/2 is unavailable
+- forwards assigned tunneled requests to the local destination server
+- streams response data back to the server
 - exposes `http-tunnels update` for GitHub-release self-updates
 
 ### Important client rules
@@ -44,6 +50,8 @@ The server has four responsibilities:
 
 - `POST /new_tunnel` - create a tunnel registration
 - `GET /tunnel` - websocket connection from the tunnel client
+- `POST /tunnel/h2` - HTTP/2 worker stream alias
+- `POST /tunnel/h2/stream` - HTTP/2 worker stream endpoint
 - `GET /ping` - health check
 - `/<anything>` - proxied tunnel traffic when the host matches an active tunnel
 
@@ -64,7 +72,11 @@ That prevents admin or server paths from stealing requests that belong to a live
 
 Shared protocol types live in `internal/protocol`.
 
-The websocket transport uses typed frames over a **single long-lived websocket per active tunnel**:
+### Websocket path
+
+The websocket transport keeps the existing protobuf frame protocol over a **single long-lived websocket per active tunnel**.
+
+Frame types remain:
 
 - `register`
 - `registered`
@@ -78,6 +90,20 @@ The websocket transport uses typed frames over a **single long-lived websocket p
 - `response_error`
 - `ping`
 - `pong`
+
+### HTTP/2 path
+
+The HTTP/2 transport is intentionally separate from the websocket interface.
+
+It uses a pool of **dedicated worker streams** on one reused H2 connection:
+
+- the client opens idle `POST /tunnel/h2/stream` worker requests
+- the server assigns **exactly one** tunneled HTTP request to each worker stream
+- request metadata/body flow from server → client over the H2 response body
+- response metadata/body flow from client → server over the H2 request body
+- closing the worker stream ends that tunneled request; the client then opens a replacement worker
+
+This keeps HTTP/2 straightforward and fully multiplexed without a separate control stream.
 
 ### Why this matters
 
@@ -96,7 +122,10 @@ The current pattern is chunked streaming on both sides.
 - flush streamed response chunks on the server side when the writer supports `http.Flusher`
 - allow long-lived streams to remain open until the request context is cancelled or the stream ends
 - keep request cancellation support so server-side disconnects can stop client-side destination requests
-- keep heartbeat `ping` / `pong` support so idle tunnel connections stay alive and dead peers are detected
+- keep transport selection separate from request scheduling
+- websocket still relies on the frame scheduler for fairness across concurrent requests
+- HTTP/2 assigns one tunneled request per worker stream and relies on native H2 multiplexing instead of websocket-style control/session frames
+- analytics ingestion still happens on the server in the normal request logging path regardless of transport
 
 ---
 
@@ -179,6 +208,7 @@ The admin UI is a Bun/Vite React SPA.
 ### Dashboard goals
 
 - show active tunnel connections
+- show which active tunnels are on HTTP/2 versus websocket fallback
 - show tunnel details
 - show request-response logs in detail
 - show analytics charts for status classes and traffic

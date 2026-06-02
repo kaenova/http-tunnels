@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/table"
 import type { TunnelRecord } from "@/lib/api"
 import { formatBytes, formatCount, formatDurationFrom } from "@/lib/format"
-import { TunnelStateBadge } from "@/components/status-badge"
+import { TunnelStateBadge, TunnelTransportBadge } from "@/components/status-badge"
 
 export function TunnelTable({
   title,
@@ -75,6 +75,7 @@ export function TunnelTable({
                   <TableHead>Subdomain</TableHead>
                   <TableHead>Requests recorded</TableHead>
                   <TableHead>Data transferred</TableHead>
+                  <TableHead>Transport</TableHead>
                   <TableHead>Livetime</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -96,6 +97,9 @@ export function TunnelTable({
                       {formatBytes(
                         tunnel.totalRequestBytes + tunnel.totalResponseBytes
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <TunnelTransportBadge transport={tunnel.transport} />
                     </TableCell>
                     <TableCell>{formatDurationFrom(tunnel.createdAt)}</TableCell>
                     <TableCell>

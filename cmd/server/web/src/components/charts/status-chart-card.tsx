@@ -34,13 +34,20 @@ const chartConfig = {
   },
 } satisfies ChartConfig
 
-export function StatusChartCard({ data }: { data: StatusChartPoint[] }) {
+export function StatusChartCard({
+  data,
+  description,
+}: {
+  data: StatusChartPoint[]
+  description?: string
+}) {
   return (
     <Card>
       <CardHeader>
         <CardTitle>Status code classes</CardTitle>
         <CardDescription>
-          Request volume grouped by 2XX, 3XX, 4XX, and 5XX responses.
+          {description ??
+            "Request volume grouped by 2XX, 3XX, 4XX, and 5XX responses."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -59,7 +66,7 @@ export function StatusChartCard({ data }: { data: StatusChartPoint[] }) {
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={(value) => value.slice(5)}
+              minTickGap={24}
             />
             <ChartTooltip
               cursor={false}

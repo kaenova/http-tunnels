@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -62,17 +64,8 @@ func (a *App) handleNewTunnel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
-	domain := strings.TrimSpace(r.URL.Query().Get("domain"))
-	domainKey := strings.TrimSpace(r.URL.Query().Get("domain_key"))
-
-	if domain == "" || domainKey == "" {
-		http.Error(w, "domain and domain_key required", http.StatusBadRequest)
-		return
-	}
-
-	record, err := a.store.FindTunnelForConnection(r.Context(), domain, hashValue(domainKey))
-	if err != nil {
-		http.Error(w, "invalid domain key", http.StatusForbidden)
+	domain, domainKey, record, ok := a.resolveTunnelConnectionRequest(w, r)
+	if !ok {
 		return
 	}
 
@@ -84,30 +77,158 @@ func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ws := protocol.NewConnection(conn)
-
 	frame, err := ws.ReadFrame()
 	if err != nil {
 		log.Printf("Tunnel websocket register read failed: domain=%s remote=%s err=%v", domain, r.RemoteAddr, err)
 		_ = ws.Close()
 		return
 	}
-	if frame.GetType() != protocol.FrameType_REGISTER {
-		log.Printf("Tunnel websocket register frame invalid: domain=%s remote=%s type=%v", domain, r.RemoteAddr, frame.GetType())
+	if err := validateRegisterFrame(frame, domain, domainKey); err != nil {
+		log.Printf("Tunnel websocket register frame invalid: domain=%s remote=%s err=%v", domain, r.RemoteAddr, err)
 		_ = ws.Close()
 		return
 	}
 
-	session := NewTunnelSession(record.ID, protocol.NormalizeHost(domain), ws, a.config.MaxConcurrentRequests)
+	session := NewTunnelSession(record.ID, protocol.NormalizeHost(domain), protocol.TransportWebSocket, ws, a.config.MaxConcurrentRequests)
 	prev := a.sessions.Set(protocol.NormalizeHost(domain), session)
 	if prev != nil {
 		_ = prev.Close()
 	}
+	_ = a.store.MarkTunnelActive(r.Context(), session.TunnelID, protocol.TransportWebSocket, r.RemoteAddr, r.UserAgent())
 
-	_ = a.store.MarkTunnelActive(r.Context(), session.TunnelID, r.RemoteAddr, r.UserAgent())
+	if err := ws.Send(a.tunnelConfigFrame(session.TunnelID, domain)); err != nil {
+		a.cleanupTunnelSession(r.Context(), session, domain, r.RemoteAddr)
+		return
+	}
+	log.Printf("Tunnel websocket connected: domain=%s tunnel_id=%s remote=%s", domain, session.TunnelID, r.RemoteAddr)
+	session.MarkActivity()
+	session.Start()
 
-	if err := ws.Send(&protocol.Frame{
+	for {
+		frame, err := ws.ReadFrame()
+		if err != nil {
+			log.Printf("Tunnel websocket disconnected: domain=%s tunnel_id=%s remote=%s err=%v", domain, session.TunnelID, r.RemoteAddr, err)
+			break
+		}
+		session.MarkActivity()
+		a.handlePendingResponseFrame(frame)
+		switch frame.GetType() {
+		case protocol.FrameType_PING:
+			_ = session.Enqueue(&protocol.Frame{Type: protocol.FrameType_PONG})
+		case protocol.FrameType_PONG:
+			session.AckPong()
+		}
+	}
+
+	a.cleanupTunnelSession(r.Context(), session, domain, r.RemoteAddr)
+}
+
+// handleTunnelH2 keeps backward compatibility and behaves the same as handleTunnelH2Stream.
+func (a *App) handleTunnelH2(w http.ResponseWriter, r *http.Request) {
+	a.handleTunnelH2Stream(w, r)
+}
+
+func (a *App) handleTunnelH2Stream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.ProtoMajor < 2 {
+		http.Error(w, "HTTP/2 required", http.StatusHTTPVersionNotSupported)
+		return
+	}
+
+	domain, _, record, ok := a.resolveTunnelConnectionRequest(w, r)
+	if !ok {
+		return
+	}
+
+	controller := http.NewResponseController(w)
+	if err := controller.EnableFullDuplex(); err != nil {
+		log.Printf("Tunnel http2 full duplex setup failed: domain=%s remote=%s err=%v", domain, r.RemoteAddr, err)
+		http.Error(w, "HTTP/2 full duplex is not available", http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	worker := NewHTTP2WorkerStream(protocol.NewH2TunnelStream(protocol.H2TunnelStreamOptions{
+		Reader: r.Body,
+		Writer: w,
+		Flush:  controller.Flush,
+		Close:  func() error { return r.Body.Close() },
+	}))
+
+	session, created, replaced := a.sessions.GetOrCreateHTTP2(protocol.NormalizeHost(domain), func() *TunnelSession {
+		return NewTunnelSession(record.ID, protocol.NormalizeHost(domain), protocol.TransportHTTP2, nil, a.config.MaxConcurrentRequests)
+	})
+	if replaced != nil {
+		_ = replaced.Close()
+	}
+	if created {
+		log.Printf("Tunnel http2 session created: domain=%s tunnel_id=%s remote=%s", domain, session.TunnelID, r.RemoteAddr)
+	}
+	_ = a.store.MarkTunnelActive(r.Context(), session.TunnelID, protocol.TransportHTTP2, r.RemoteAddr, r.UserAgent())
+	if err := session.RegisterHTTP2Worker(worker); err != nil {
+		_ = worker.Close()
+		http.Error(w, "HTTP/2 tunnel session is not available", http.StatusServiceUnavailable)
+		return
+	}
+	session.MarkActivity()
+	w.WriteHeader(http.StatusOK)
+	_ = controller.Flush()
+
+	defer func() {
+		remaining := session.UnregisterHTTP2Worker(worker)
+		_ = worker.Close()
+		if remaining == 0 {
+			a.scheduleHTTP2SessionCleanup(session, domain, r.RemoteAddr)
+		}
+	}()
+
+	select {
+	case <-worker.Done():
+	case <-session.Done():
+	}
+}
+
+func (a *App) resolveTunnelConnectionRequest(w http.ResponseWriter, r *http.Request) (string, string, TunnelRecord, bool) {
+	domain := strings.TrimSpace(r.URL.Query().Get("domain"))
+	domainKey := strings.TrimSpace(r.URL.Query().Get("domain_key"))
+	if domain == "" || domainKey == "" {
+		http.Error(w, "domain and domain_key required", http.StatusBadRequest)
+		return "", "", TunnelRecord{}, false
+	}
+	record, err := a.store.FindTunnelForConnection(r.Context(), domain, hashValue(domainKey))
+	if err != nil {
+		http.Error(w, "invalid domain key", http.StatusForbidden)
+		return "", "", TunnelRecord{}, false
+	}
+	return domain, domainKey, record, true
+}
+
+func validateRegisterFrame(frame *protocol.Frame, domain, domainKey string) error {
+	if frame == nil {
+		return fmt.Errorf("register frame missing")
+	}
+	if frame.GetType() != protocol.FrameType_REGISTER {
+		return fmt.Errorf("unexpected frame type %v", frame.GetType())
+	}
+	if value := strings.TrimSpace(frame.GetDomain()); value != "" && protocol.NormalizeHost(value) != protocol.NormalizeHost(domain) {
+		return fmt.Errorf("register domain mismatch")
+	}
+	if value := strings.TrimSpace(frame.GetDomainKey()); value != "" && value != domainKey {
+		return fmt.Errorf("register domain key mismatch")
+	}
+	return nil
+}
+
+func (a *App) tunnelConfigFrame(tunnelID, domain string) *protocol.Frame {
+	return &protocol.Frame{
 		Type:     protocol.FrameType_REGISTERED,
-		TunnelId: session.TunnelID,
+		TunnelId: tunnelID,
 		Domain:   domain,
 		Config: &protocol.TunnelConfig{
 			MaxConcurrent:    int32(a.config.MaxConcurrentRequests),
@@ -122,65 +243,81 @@ func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 				Jitter:         true,
 			},
 		},
-	}); err != nil {
-		_ = session.Close()
+	}
+}
+
+func (a *App) handlePendingResponseFrame(frame *protocol.Frame) bool {
+	switch frame.GetType() {
+	case protocol.FrameType_RESPONSE_START:
+		if req, ok := a.pending.Get(frame.GetRequestId()); ok && req != nil {
+			req.MarkResponseStarted()
+			select {
+			case req.ResponseCh <- &PendingResponse{Status: int(frame.GetStatus()), Headers: convertHeaders(frame.GetResponseHeaders())}:
+			default:
+			}
+		}
+		return false
+	case protocol.FrameType_RESPONSE_BODY:
+		if req, ok := a.pending.Get(frame.GetRequestId()); ok && req != nil {
+			chunk := frame.GetChunk()
+			if len(chunk) == 0 {
+				return false
+			}
+			copied := make([]byte, len(chunk))
+			copy(copied, chunk)
+			req.bodyCh <- copied
+		}
+		return false
+	case protocol.FrameType_RESPONSE_END:
+		if req, ok := a.pending.Get(frame.GetRequestId()); ok && req != nil {
+			req.CloseBody()
+			a.pending.Remove(frame.GetRequestId())
+		}
+		return true
+	case protocol.FrameType_RESPONSE_ERROR:
+		if req, ok := a.pending.Get(frame.GetRequestId()); ok && req != nil {
+			req.Fail(&requestError{status: int(frame.GetStatus()), msg: frame.GetError()})
+			a.pending.Remove(frame.GetRequestId())
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) scheduleHTTP2SessionCleanup(session *TunnelSession, domain, remoteAddr string) {
+	go func() {
+		timer := time.NewTimer(1 * time.Second)
+		defer timer.Stop()
+		<-timer.C
+		current, ok := a.sessions.Get(protocol.NormalizeHost(domain))
+		if !ok || current != session {
+			return
+		}
+		if session.HTTP2WorkerCount() > 0 {
+			return
+		}
+		a.cleanupTunnelSession(context.Background(), session, domain, remoteAddr)
+	}()
+}
+
+func (a *App) cleanupTunnelSession(ctx context.Context, session *TunnelSession, domain, remoteAddr string) {
+	if session == nil {
 		return
 	}
-	log.Printf("Tunnel websocket connected: domain=%s tunnel_id=%s remote=%s", domain, session.TunnelID, r.RemoteAddr)
-	session.MarkActivity()
-	session.Start()
-
-	for {
-		frame, err := ws.ReadFrame()
-		if err != nil {
-			log.Printf("Tunnel websocket disconnected: domain=%s tunnel_id=%s remote=%s err=%v", domain, session.TunnelID, r.RemoteAddr, err)
-			break
-		}
-		session.MarkActivity()
-		switch frame.GetType() {
-		case protocol.FrameType_PING:
-			_ = session.Enqueue(&protocol.Frame{Type: protocol.FrameType_PONG})
-		case protocol.FrameType_PONG:
-			session.AckPong()
-		case protocol.FrameType_RESPONSE_START:
-			if req, ok := a.pending.Get(frame.GetRequestId()); ok && req != nil {
-				req.MarkResponseStarted()
-				select {
-				case req.ResponseCh <- &PendingResponse{Status: int(frame.GetStatus()), Headers: convertHeaders(frame.GetResponseHeaders())}:
-				default:
-				}
-			}
-		case protocol.FrameType_RESPONSE_BODY:
-			if req, ok := a.pending.Get(frame.GetRequestId()); ok && req != nil {
-				chunk := frame.GetChunk()
-				if len(chunk) == 0 {
-					continue
-				}
-				copied := make([]byte, len(chunk))
-				copy(copied, chunk)
-				req.bodyCh <- copied
-			}
-		case protocol.FrameType_RESPONSE_END:
-			if req, ok := a.pending.Get(frame.GetRequestId()); ok && req != nil {
-				req.CloseBody()
-				a.pending.Remove(frame.GetRequestId())
-			}
-		case protocol.FrameType_RESPONSE_ERROR:
-			if req, ok := a.pending.Get(frame.GetRequestId()); ok && req != nil {
-				req.Fail(&requestError{status: int(frame.GetStatus()), msg: frame.GetError()})
-				a.pending.Remove(frame.GetRequestId())
-			}
-		}
-	}
-
 	a.sessions.Delete(protocol.NormalizeHost(domain))
 	a.pending.FailByTunnel(session.TunnelID, errors.New("tunnel connection closed"))
 	_ = session.Close()
-	_ = a.store.MarkTunnelDisconnected(r.Context(), session.TunnelID)
-	log.Printf("Tunnel session cleaned up: domain=%s tunnel_id=%s remote=%s", domain, session.TunnelID, r.RemoteAddr)
+	_ = a.store.MarkTunnelDisconnected(ctx, session.TunnelID)
+	log.Printf("Tunnel session cleaned up: transport=%s domain=%s tunnel_id=%s remote=%s", session.Transport, domain, session.TunnelID, remoteAddr)
 }
 
 func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
+	if a.shouldRedirectAdminHostRoot(r) {
+		a.redirectAdminHostRoot(w, r)
+		return
+	}
+
 	host := protocol.NormalizeHost(r.Host)
 
 	session, ok := a.sessions.Get(host)
@@ -254,6 +391,11 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if session.SupportsHTTP2Workers() {
+		a.handleTunnelHTTPOverHTTP2(w, r, session, requestPath, forwardHeaders, requestCapture, logEntry, &responseHeaders, &responseCapture, &statusCode, &responseErr)
+		return
+	}
+
 	req := &PendingRequest{
 		ID:         requestID,
 		TunnelID:   session.TunnelID,
@@ -274,21 +416,26 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 	for key, values := range forwardHeaders {
 		requestFrameHeaders[key] = &protocol.StringList{Values: values}
 	}
-	if err := session.Enqueue(&protocol.Frame{
+	requestStartFrame := &protocol.Frame{
 		Type:          protocol.FrameType_REQUEST_START,
 		RequestId:     requestID,
 		Method:        r.Method,
 		Path:          requestPath,
 		Headers:       requestFrameHeaders,
 		ContentLength: r.ContentLength,
-	}); err != nil {
+	}
+
+	if err := session.Enqueue(requestStartFrame); err != nil {
 		responseErr = err
 		statusCode = http.StatusBadGateway
 		http.Error(w, err.Error(), statusCode)
 		return
 	}
-
-	go a.streamRequestBody(r, session, req, requestCapture, logEntry)
+	go a.streamRequestBodyToSender(r, session.Enqueue, func(err error) {
+		if err != nil {
+			_ = session.Enqueue(&protocol.Frame{Type: protocol.FrameType_REQUEST_CANCEL, RequestId: requestID, Error: err.Error()})
+		}
+	}, req, requestCapture, logEntry)
 
 	select {
 	case resp := <-req.ResponseCh:
@@ -341,6 +488,163 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) handleTunnelHTTPOverHTTP2(w http.ResponseWriter, r *http.Request, session *TunnelSession, requestPath string, forwardHeaders map[string][]string, requestCapture *BodyCapture, logEntry *RequestResponseLog, responseHeaders *map[string][]string, responseCapture **BodyCapture, statusCode *int, responseErr *error) {
+	worker, err := session.AcquireHTTP2Worker()
+	if err != nil {
+		*responseErr = err
+		*statusCode = http.StatusServiceUnavailable
+		http.Error(w, "No HTTP/2 worker available", *statusCode)
+		return
+	}
+	defer worker.Close()
+
+	session.MarkActivity()
+	stream := worker.Stream
+	if err := stream.WriteRequestStart(protocol.H2RequestStart{
+		Method:        r.Method,
+		Path:          requestPath,
+		Headers:       forwardHeaders,
+		ContentLength: r.ContentLength,
+	}); err != nil {
+		*responseErr = err
+		*statusCode = http.StatusBadGateway
+		http.Error(w, err.Error(), *statusCode)
+		return
+	}
+
+	requestSendDone := make(chan error, 1)
+	go func() {
+		requestSendDone <- a.streamRequestBodyToHTTP2Worker(r, stream, requestCapture, logEntry)
+	}()
+
+	go func() {
+		<-r.Context().Done()
+		_ = worker.Close()
+	}()
+
+	messageType, payload, err := stream.ReadMessage()
+	if err != nil {
+		log.Printf("Tunnel http2 response start read failed: domain=%s path=%s tunnel_id=%s err=%v", session.Domain, requestPath, session.TunnelID, err)
+		*responseErr = err
+		*statusCode = http.StatusBadGateway
+		http.Error(w, err.Error(), *statusCode)
+		return
+	}
+
+	switch messageType {
+	case protocol.H2MessageResponseError:
+		remoteErr := protocol.H2ResponseError{Status: http.StatusBadGateway, Error: "upstream error"}
+		if unmarshalErr := json.Unmarshal(payload, &remoteErr); unmarshalErr != nil {
+			*responseErr = unmarshalErr
+			*statusCode = http.StatusBadGateway
+			http.Error(w, unmarshalErr.Error(), *statusCode)
+			return
+		}
+		*responseErr = &requestError{status: remoteErr.Status, msg: remoteErr.Error}
+		*statusCode = remoteErr.Status
+		http.Error(w, remoteErr.Error, remoteErr.Status)
+		return
+	case protocol.H2MessageResponseStart:
+		var start protocol.H2ResponseStart
+		if err := json.Unmarshal(payload, &start); err != nil {
+			*responseErr = err
+			*statusCode = http.StatusBadGateway
+			http.Error(w, err.Error(), *statusCode)
+			return
+		}
+		*statusCode = start.Status
+		*responseHeaders = start.Headers
+		*responseCapture = NewBodyCapture(contentTypeFromHeaders(start.Headers))
+		protocol.ApplyHeaders(w.Header(), start.Headers)
+		w.WriteHeader(start.Status)
+	default:
+		*responseErr = fmt.Errorf("unexpected h2 response message: %d", messageType)
+		*statusCode = http.StatusBadGateway
+		http.Error(w, (*responseErr).Error(), *statusCode)
+		return
+	}
+
+	flusher, canFlush := w.(http.Flusher)
+	flushStreaming := canFlush && shouldFlushStreamingResponse(contentTypeFromHeaders(*responseHeaders))
+	if flushStreaming {
+		flusher.Flush()
+	}
+
+	for {
+		messageType, payload, err = stream.ReadMessage()
+		if err != nil {
+			if isExpectedHTTP2WorkerClose(err) {
+				return
+			}
+			log.Printf("Tunnel http2 response body read failed: domain=%s path=%s tunnel_id=%s err=%v", session.Domain, requestPath, session.TunnelID, err)
+			*responseErr = err
+			return
+		}
+		switch messageType {
+		case protocol.H2MessageResponseBody:
+			if len(payload) == 0 {
+				continue
+			}
+			logEntry.ResponseBytes += int64(len(payload))
+			(*responseCapture).Observe(payload)
+			_, _ = w.Write(payload)
+			if flushStreaming {
+				flusher.Flush()
+			}
+		case protocol.H2MessageResponseEnd:
+			select {
+			case err := <-requestSendDone:
+				if err != nil && *responseErr == nil {
+					*responseErr = err
+				}
+			default:
+			}
+			return
+		case protocol.H2MessageResponseError:
+			remoteErr := protocol.H2ResponseError{Status: http.StatusBadGateway, Error: "upstream error"}
+			if err := json.Unmarshal(payload, &remoteErr); err != nil {
+				*responseErr = err
+				return
+			}
+			*responseErr = &requestError{status: remoteErr.Status, msg: remoteErr.Error}
+			return
+		default:
+			*responseErr = fmt.Errorf("unexpected h2 response message: %d", messageType)
+			return
+		}
+	}
+}
+
+func (a *App) streamRequestBodyToHTTP2Worker(r *http.Request, stream *protocol.H2TunnelStream, requestCapture *BodyCapture, logEntry *RequestResponseLog) error {
+	defer func() {
+		_ = stream.WriteRequestEnd()
+	}()
+	if r.Body == nil {
+		return nil
+	}
+	defer r.Body.Close()
+
+	buf := make([]byte, protocol.DefaultChunkSize)
+	for {
+		n, err := r.Body.Read(buf)
+		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			logEntry.RequestBytes += int64(n)
+			requestCapture.Observe(chunk)
+			if sendErr := stream.WriteRequestBody(chunk); sendErr != nil {
+				return sendErr
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
 type requestError struct {
 	status int
 	msg    string
@@ -348,9 +652,9 @@ type requestError struct {
 
 func (e *requestError) Error() string { return e.msg }
 
-func (a *App) streamRequestBody(r *http.Request, session *TunnelSession, req *PendingRequest, requestCapture *BodyCapture, logEntry *RequestResponseLog) {
+func (a *App) streamRequestBodyToSender(r *http.Request, send func(*protocol.Frame) error, cancel func(error), req *PendingRequest, requestCapture *BodyCapture, logEntry *RequestResponseLog) {
 	defer func() {
-		_ = session.Enqueue(&protocol.Frame{Type: protocol.FrameType_REQUEST_END, RequestId: req.ID})
+		_ = send(&protocol.Frame{Type: protocol.FrameType_REQUEST_END, RequestId: req.ID})
 	}()
 	if r.Body == nil {
 		return
@@ -365,12 +669,8 @@ func (a *App) streamRequestBody(r *http.Request, session *TunnelSession, req *Pe
 			copy(chunk, buf[:n])
 			logEntry.RequestBytes += int64(n)
 			requestCapture.Observe(chunk)
-			if enqueueErr := session.Enqueue(&protocol.Frame{
-				Type:      protocol.FrameType_REQUEST_BODY,
-				RequestId: req.ID,
-				Chunk:     chunk,
-			}); enqueueErr != nil {
-				req.Fail(enqueueErr)
+			if sendErr := send(&protocol.Frame{Type: protocol.FrameType_REQUEST_BODY, RequestId: req.ID, Chunk: chunk}); sendErr != nil {
+				req.Fail(sendErr)
 				return
 			}
 		}
@@ -379,10 +679,20 @@ func (a *App) streamRequestBody(r *http.Request, session *TunnelSession, req *Pe
 		}
 		if err != nil {
 			req.Fail(err)
-			_ = session.Enqueue(&protocol.Frame{Type: protocol.FrameType_REQUEST_CANCEL, RequestId: req.ID, Error: err.Error()})
+			if cancel != nil {
+				cancel(err)
+			}
 			return
 		}
 	}
+}
+
+func isExpectedHTTP2WorkerClose(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return errors.Is(err, io.EOF) || strings.Contains(message, "stream error") && strings.Contains(message, "cancel") || strings.Contains(message, "body closed by handler") || strings.Contains(message, "unexpected eof")
 }
 
 func cloneHeaders(h http.Header) map[string][]string {

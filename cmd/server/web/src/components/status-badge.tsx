@@ -28,3 +28,11 @@ export function TunnelStateBadge({ state }: { state: string }) {
 
   return <Badge variant={variant}>{state}</Badge>
 }
+
+export function TunnelTransportBadge({ transport }: { transport?: string }) {
+  const normalized = (transport || "unknown").toLowerCase()
+  const variant = normalized === "http2" ? "default" : normalized === "websocket" ? "secondary" : "outline"
+  const label = normalized === "http2" ? "HTTP/2" : normalized === "websocket" ? "WebSocket" : transport || "Unknown"
+
+  return <Badge variant={variant}>{label}</Badge>
+}

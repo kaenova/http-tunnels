@@ -5,13 +5,19 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { api, ApiError } from "@/lib/api"
+import {
+  chartFiltersDescription,
+  defaultChartFilters,
+  normalizeChartFilters,
+} from "@/lib/chart-options"
 import { formatBytes, formatDateTime, formatDurationFrom } from "@/lib/format"
 import { DeleteTunnelDialog } from "@/components/delete-tunnel-dialog"
 import { PageHeader } from "@/components/page-header"
 import { PageLoading } from "@/components/page-loading"
 import { RecentCreationList } from "@/components/recent-creation-list"
 import { RequestLogList } from "@/components/request-log-list"
-import { TunnelStateBadge } from "@/components/status-badge"
+import { TunnelStateBadge, TunnelTransportBadge } from "@/components/status-badge"
+import { ChartFiltersCard } from "@/components/charts/chart-filters-card"
 import { StatusChartCard } from "@/components/charts/status-chart-card"
 import { TrafficChartCard } from "@/components/charts/traffic-chart-card"
 import { Button } from "@/components/ui/button"
@@ -31,10 +37,13 @@ export function TunnelDetailPage() {
   const params = useParams<{ tunnelId: string }>()
   const tunnelId = params.tunnelId
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [chartFilters, setChartFilters] = useState(defaultChartFilters)
+  const [draftChartFilters, setDraftChartFilters] = useState(defaultChartFilters)
 
   const detailQuery = useQuery({
-    queryKey: ["tunnel-detail", tunnelId, recentLogLimit],
-    queryFn: () => api.tunnelDetail(tunnelId ?? "", 1, recentLogLimit),
+    queryKey: ["tunnel-detail", tunnelId, recentLogLimit, chartFilters],
+    queryFn: () =>
+      api.tunnelDetail(tunnelId ?? "", 1, recentLogLimit, chartFilters),
     enabled: !!tunnelId,
     refetchInterval: 5000,
   })
@@ -75,6 +84,7 @@ export function TunnelDetailPage() {
   }
 
   const { tunnel } = detailQuery.data
+  const chartDescription = chartFiltersDescription(chartFilters)
 
   return (
     <div className="flex flex-col">
@@ -113,6 +123,10 @@ export function TunnelDetailPage() {
               />
               <DetailItem label="Requests recorded" value={String(tunnel.requestCount)} />
               <DetailItem
+                label="Active transport"
+                value={<TunnelTransportBadge transport={tunnel.transport} />}
+              />
+              <DetailItem
                 label="Last activity"
                 value={formatDateTime(tunnel.lastActivityAt)}
               />
@@ -128,9 +142,25 @@ export function TunnelDetailPage() {
           </CardContent>
         </Card>
 
+        <ChartFiltersCard
+          value={draftChartFilters}
+          onChange={setDraftChartFilters}
+          onApply={() => setChartFilters(normalizeChartFilters(draftChartFilters))}
+          onReset={() => {
+            setDraftChartFilters(defaultChartFilters)
+            setChartFilters(defaultChartFilters)
+          }}
+        />
+
         <div className="grid gap-6 xl:grid-cols-2">
-          <StatusChartCard data={detailQuery.data.statusChart} />
-          <TrafficChartCard data={detailQuery.data.trafficChart} />
+          <StatusChartCard
+            data={detailQuery.data.statusChart}
+            description={`Status-code volume for this tunnel · ${chartDescription}`}
+          />
+          <TrafficChartCard
+            data={detailQuery.data.trafficChart}
+            description={`Inbound and outbound bytes for this tunnel · ${chartDescription}`}
+          />
         </div>
 
         <RequestLogList
