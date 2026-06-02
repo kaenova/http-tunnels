@@ -55,6 +55,7 @@ export type TunnelCreationLog = {
 
 export type DashboardSummary = {
   activeTunnels: number
+  activeTraffic: number
   registeredTunnels: number
   totalRequests: number
   dataTransferredBytes: number

@@ -62,6 +62,7 @@ type TunnelCreationLog struct {
 
 type DashboardSummary struct {
 	ActiveTunnels        int64 `json:"activeTunnels"`
+	ActiveTraffic        int64 `json:"activeTraffic"`
 	RegisteredTunnels    int64 `json:"registeredTunnels"`
 	TotalRequests        int64 `json:"totalRequests"`
 	DataTransferredBytes int64 `json:"dataTransferredBytes"`

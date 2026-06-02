@@ -147,6 +147,7 @@ func (a *App) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	response.Summary.ActiveTraffic = int64(a.sessions.ActiveRequestCount())
 	writeJSON(w, http.StatusOK, response)
 }
 

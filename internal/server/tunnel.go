@@ -64,6 +64,19 @@ func (s *TunnelSessionStore) Count() int {
 	return len(s.sessions)
 }
 
+func (s *TunnelSessionStore) ActiveRequestCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	total := 0
+	for _, session := range s.sessions {
+		if session == nil {
+			continue
+		}
+		total += int(atomic.LoadInt32(&session.activeCount))
+	}
+	return total
+}
+
 // TunnelSession represents an active tunnel connection
 type TunnelSession struct {
 	TunnelID      string

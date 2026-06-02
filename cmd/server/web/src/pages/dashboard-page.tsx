@@ -5,6 +5,7 @@ import {
   ArrowUpDownIcon,
   NetworkIcon,
   RouterIcon,
+  ZapIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -58,10 +59,10 @@ export function DashboardPage() {
         icon: NetworkIcon,
       },
       {
-        title: "Registered active subdomains",
-        value: formatCount(summary.registeredTunnels),
-        description: "Pending and active tunnel registrations.",
-        icon: RouterIcon,
+        title: "Active traffic",
+        value: formatCount(summary.activeTraffic),
+        description: "In-flight requests across all active tunnels right now.",
+        icon: ZapIcon,
       },
       {
         title: "Recorded requests",
@@ -74,6 +75,12 @@ export function DashboardPage() {
         value: formatBytes(summary.dataTransferredBytes),
         description: "Inbound and outbound bytes tracked in analytics.",
         icon: ArrowUpDownIcon,
+      },
+      {
+        title: "Registered tunnel identities",
+        value: formatCount(summary.registeredTunnels),
+        description: "Known tunnel domains retained in analytics history.",
+        icon: RouterIcon,
       },
     ]
   }, [dashboardQuery.data?.summary])
@@ -101,7 +108,7 @@ export function DashboardPage() {
         breadcrumbs={[{ label: "Admin", href: "/admin" }, { label: "Dashboard" }]}
       />
       <div className="flex flex-col gap-6 p-6">
-        <div className="grid gap-4 lg:grid-cols-4">
+        <div className="grid gap-4 lg:grid-cols-5">
           {metrics.map((metric) => (
             <MetricCard key={metric.title} {...metric} />
           ))}
