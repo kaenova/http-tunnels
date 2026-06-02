@@ -105,12 +105,25 @@ http-tunnels -host https://tunnel.example.com -subdomain myapp http://localhost:
 http-tunnels update
 ```
 
+Optional flags:
+
+```bash
+http-tunnels update --version v6.0.0
+http-tunnels update --force
+```
+
 The update command:
 
 1. detects your current OS and architecture
 2. fetches the latest GitHub release for `kaenova/http-tunnels`
 3. downloads the matching release asset
-4. replaces the running client binary in place
+4. extracts the release archive
+5. replaces the running client binary in place on macOS/Linux
+
+Current platform notes:
+
+- macOS/Linux: supported for in-place replacement
+- Windows: download + extraction works, but in-place replacement is not supported yet; the new binary is written next to the current executable with a `.new.exe` suffix
 
 ---
 
