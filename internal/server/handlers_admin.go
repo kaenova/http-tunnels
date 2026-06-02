@@ -12,6 +12,10 @@ type loginRequest struct {
 }
 
 func (a *App) handleAdminApp(w http.ResponseWriter, r *http.Request) {
+	if !a.isAdminHost(r) {
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -38,11 +42,19 @@ func (a *App) handleAdminApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
+	if !a.isAdminHost(r) {
+		http.NotFound(w, r)
+		return
+	}
 	a.clearAdminSession(w)
 	http.Redirect(w, r, "/admin/auth/login", http.StatusFound)
 }
 
 func (a *App) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
+	if !a.isAdminHost(r) {
+		http.NotFound(w, r)
+		return
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin")
 	switch {
 	case path == "/auth/session":

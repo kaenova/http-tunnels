@@ -64,10 +64,10 @@ func (a *App) Serve(listener net.Listener) error {
 	mux.HandleFunc("/tunnel", a.handleTunnelWS)
 
 	// Static assets (referenced by admin SPA at root paths)
-	mux.HandleFunc("/assets/", a.serveAsset)
-	mux.HandleFunc("/favicon.svg", a.serveAsset)
-	mux.HandleFunc("/favicon.ico", a.serveAsset)
-	mux.HandleFunc("/icons.svg", a.serveAsset)
+	mux.HandleFunc("/assets/", a.handleAssets)
+	mux.HandleFunc("/favicon.svg", a.handleAssets)
+	mux.HandleFunc("/favicon.ico", a.handleAssets)
+	mux.HandleFunc("/icons.svg", a.handleAssets)
 
 	// Admin routes
 	mux.HandleFunc("/api/admin/", a.handleAdminAPI)
@@ -220,12 +220,25 @@ func (a *App) logError(context string, err error) {
 	log.Printf("%s: %v", context, err)
 }
 
-func (a *App) serveAsset(w http.ResponseWriter, r *http.Request) {
-	if a.assetHandler == nil {
-		http.Error(w, "Admin assets are not available", http.StatusServiceUnavailable)
+func (a *App) handleAssets(w http.ResponseWriter, r *http.Request) {
+	if a.isAdminHost(r) {
+		if a.assetHandler == nil {
+			http.Error(w, "Admin assets are not available", http.StatusServiceUnavailable)
+			return
+		}
+		a.assetHandler.ServeHTTP(w, r)
 		return
 	}
-	a.assetHandler.ServeHTTP(w, r)
+	a.handleTunnelHTTP(w, r)
+}
+
+func (a *App) isAdminHost(r *http.Request) bool {
+	if a == nil || strings.TrimSpace(a.config.TunnelDomain) == "" || r == nil {
+		return false
+	}
+	host := normalizeRequestHost(r.Host)
+	adminHost := normalizeRequestHost(a.config.TunnelDomain)
+	return host == adminHost
 }
 
 func (a *App) serveAdminIndex(w http.ResponseWriter, r *http.Request) {
