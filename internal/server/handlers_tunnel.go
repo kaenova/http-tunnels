@@ -524,6 +524,15 @@ func (a *App) handleTunnelHTTPOverHTTP2(w http.ResponseWriter, r *http.Request, 
 
 	messageType, payload, err := stream.ReadMessage()
 	if err != nil {
+		if isExpectedHTTP2WorkerClose(err) || r.Context().Err() != nil {
+			if r.Context().Err() != nil {
+				*responseErr = r.Context().Err()
+				*statusCode = 499
+			} else {
+				*responseErr = err
+			}
+			return
+		}
 		log.Printf("Tunnel http2 response start read failed: domain=%s path=%s tunnel_id=%s err=%v", session.Domain, requestPath, session.TunnelID, err)
 		*responseErr = err
 		*statusCode = http.StatusBadGateway
@@ -573,7 +582,10 @@ func (a *App) handleTunnelHTTPOverHTTP2(w http.ResponseWriter, r *http.Request, 
 	for {
 		messageType, payload, err = stream.ReadMessage()
 		if err != nil {
-			if isExpectedHTTP2WorkerClose(err) {
+			if isExpectedHTTP2WorkerClose(err) || r.Context().Err() != nil {
+				if r.Context().Err() != nil && *responseErr == nil {
+					*responseErr = r.Context().Err()
+				}
 				return
 			}
 			log.Printf("Tunnel http2 response body read failed: domain=%s path=%s tunnel_id=%s err=%v", session.Domain, requestPath, session.TunnelID, err)
