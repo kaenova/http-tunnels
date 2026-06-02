@@ -19,10 +19,10 @@ type Store struct {
 	db *sql.DB
 
 	// Async log queue
-	logQueue    chan RequestResponseLog
-	logWg       sync.WaitGroup
-	logCtx      context.Context
-	logCancel   context.CancelFunc
+	logQueue  chan RequestResponseLog
+	logWg     sync.WaitGroup
+	logCtx    context.Context
+	logCancel context.CancelFunc
 }
 
 func OpenStore(dbPath string) (*Store, error) {
@@ -30,6 +30,11 @@ func OpenStore(dbPath string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite database failed: %w", err)
 	}
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(0)
 
 	store := &Store{db: db}
 	if err := store.configure(); err != nil {
@@ -61,6 +66,56 @@ func (s *Store) Close() error {
 	s.logWg.Wait()
 	close(s.logQueue)
 	return s.db.Close()
+}
+
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") || strings.Contains(message, "sqlite_busy") || strings.Contains(message, "database table is locked")
+}
+
+func (s *Store) execBusyRetry(fn func() error) error {
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(25*(attempt+1)) * time.Millisecond)
+		}
+		err := fn()
+		if !isSQLiteBusy(err) {
+			return err
+		}
+		lastErr = err
+	}
+	return lastErr
+}
+
+func (s *Store) execContextBusyRetry(ctx context.Context, query string, args ...any) error {
+	return s.execBusyRetry(func() error {
+		_, err := s.db.ExecContext(ctx, query, args...)
+		return err
+	})
+}
+
+func (s *Store) execResultContextBusyRetry(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	var result sql.Result
+	err := s.execBusyRetry(func() error {
+		var err error
+		result, err = s.db.ExecContext(ctx, query, args...)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) beginTxBusyRetry(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	var tx *sql.Tx
+	err := s.execBusyRetry(func() error {
+		var err error
+		tx, err = s.db.BeginTx(ctx, opts)
+		return err
+	})
+	return tx, err
 }
 
 func (s *Store) logWorker() {
@@ -95,7 +150,7 @@ func (s *Store) insertRequestLogSync(logEntry RequestResponseLog) {
 		return
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.beginTxBusyRetry(context.Background(), nil)
 	if err != nil {
 		log.Printf("request log begin tx: %v", err)
 		return
@@ -144,9 +199,13 @@ func (s *Store) configure() error {
 		`PRAGMA journal_mode = WAL;`,
 		`PRAGMA foreign_keys = ON;`,
 		`PRAGMA busy_timeout = 5000;`,
+		`PRAGMA synchronous = NORMAL;`,
 	}
 	for _, statement := range pragmas {
-		if _, err := s.db.Exec(statement); err != nil {
+		if err := s.execBusyRetry(func() error {
+			_, err := s.db.Exec(statement)
+			return err
+		}); err != nil {
 			return fmt.Errorf("configuring sqlite failed: %w", err)
 		}
 	}
@@ -232,7 +291,7 @@ func (s *Store) CreateTunnel(ctx context.Context, requestedSubdomain, domain, do
 		UserAgent:          userAgent,
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	err := s.execContextBusyRetry(ctx, `
 		INSERT INTO tunnels (
 			id, domain, requested_subdomain, domain_key_hash, state, created_at, remote_addr, user_agent
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -258,7 +317,7 @@ func (s *Store) DomainExists(ctx context.Context, domain string) (bool, error) {
 }
 
 func (s *Store) LogTunnelCreation(ctx context.Context, tunnelID, domain, requestedSubdomain, remoteAddr, userAgent string, success bool, errorMessage string) error {
-	_, err := s.db.ExecContext(ctx, `
+	err := s.execContextBusyRetry(ctx, `
 		INSERT INTO tunnel_creation_logs (
 			tunnel_id, domain, requested_subdomain, remote_addr, user_agent, success, error_message, created_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -283,7 +342,7 @@ func (s *Store) FindTunnelForConnection(ctx context.Context, domain, domainKeyHa
 
 func (s *Store) MarkTunnelActive(ctx context.Context, tunnelID, remoteAddr, userAgent string) error {
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
+	err := s.execContextBusyRetry(ctx, `
 		UPDATE tunnels
 		SET state = 'active', connected_at = COALESCE(connected_at, ?), disconnected_at = NULL, last_activity_at = ?, remote_addr = ?, user_agent = ?
 		WHERE id = ?
@@ -296,7 +355,7 @@ func (s *Store) MarkTunnelActive(ctx context.Context, tunnelID, remoteAddr, user
 
 func (s *Store) MarkTunnelDisconnected(ctx context.Context, tunnelID string) error {
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
+	err := s.execContextBusyRetry(ctx, `
 		UPDATE tunnels
 		SET state = CASE WHEN deleted_at IS NULL THEN 'disconnected' ELSE 'deleted' END,
 		    disconnected_at = ?,
@@ -311,7 +370,7 @@ func (s *Store) MarkTunnelDisconnected(ctx context.Context, tunnelID string) err
 
 func (s *Store) DeleteTunnel(ctx context.Context, tunnelID string) error {
 	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `
+	result, err := s.execResultContextBusyRetry(ctx, `
 		UPDATE tunnels
 		SET state = 'deleted', deleted_at = ?, disconnected_at = COALESCE(disconnected_at, ?)
 		WHERE id = ?
