@@ -42,9 +42,12 @@ type TunnelClient struct {
 
 // NewHarness creates a new integration test harness
 func NewHarness(t *testing.T) *TestHarness {
-	t.Helper()
+	return NewHarnessTB(t)
+}
 
-	// 1. Start test backend
+func NewHarnessTB(tb testing.TB) *TestHarness {
+	tb.Helper()
+
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Backend", "echo")
 		w.Header().Set("Content-Type", "application/json")
@@ -54,7 +57,6 @@ func NewHarness(t *testing.T) *TestHarness {
 		w.Write([]byte(resp))
 	}))
 
-	// 2. Start tunnel server
 	cfg := server.Config{
 		ListenAddr:                   "127.0.0.1:0",
 		DBPath:                       ":memory:",
@@ -72,12 +74,12 @@ func NewHarness(t *testing.T) *TestHarness {
 
 	app, err := server.NewApp(cfg, nil)
 	if err != nil {
-		t.Fatalf("creating tunnel server: %v", err)
+		tb.Fatalf("creating tunnel server: %v", err)
 	}
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
-		t.Fatalf("listen: %v", err)
+		tb.Fatalf("listen: %v", err)
 	}
 
 	go func() {
@@ -102,7 +104,7 @@ func NewHarness(t *testing.T) *TestHarness {
 		tunnels: make(map[string]*TunnelClient),
 	}
 
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		h.Close()
 	})
 
@@ -118,7 +120,11 @@ func (h *TestHarness) Close() {
 
 // HTTPGet makes an HTTP GET request through the tunnel
 func (h *TestHarness) HTTPGet(t *testing.T, domain, path string) (*http.Response, error) {
-	t.Helper()
+	return h.HTTPGetTB(t, domain, path)
+}
+
+func (h *TestHarness) HTTPGetTB(tb testing.TB, domain, path string) (*http.Response, error) {
+	tb.Helper()
 	req, err := http.NewRequest("GET", h.TunnelAddr+path, nil)
 	if err != nil {
 		return nil, err
@@ -129,7 +135,11 @@ func (h *TestHarness) HTTPGet(t *testing.T, domain, path string) (*http.Response
 
 // HTTPPost makes an HTTP POST request through the tunnel
 func (h *TestHarness) HTTPPost(t *testing.T, domain, path, contentType string, body io.Reader) (*http.Response, error) {
-	t.Helper()
+	return h.HTTPPostTB(t, domain, path, contentType, body)
+}
+
+func (h *TestHarness) HTTPPostTB(tb testing.TB, domain, path, contentType string, body io.Reader) (*http.Response, error) {
+	tb.Helper()
 	req, err := http.NewRequest("POST", h.TunnelAddr+path, body)
 	if err != nil {
 		return nil, err
@@ -141,7 +151,11 @@ func (h *TestHarness) HTTPPost(t *testing.T, domain, path, contentType string, b
 
 // NewHarnessWithBackend creates a harness with a custom backend
 func NewHarnessWithBackend(t *testing.T, handler http.Handler) *TestHarness {
-	t.Helper()
+	return NewHarnessWithBackendTB(t, handler)
+}
+
+func NewHarnessWithBackendTB(tb testing.TB, handler http.Handler) *TestHarness {
+	tb.Helper()
 
 	backend := httptest.NewServer(handler)
 
@@ -162,12 +176,12 @@ func NewHarnessWithBackend(t *testing.T, handler http.Handler) *TestHarness {
 
 	app, err := server.NewApp(cfg, nil)
 	if err != nil {
-		t.Fatalf("creating tunnel server: %v", err)
+		tb.Fatalf("creating tunnel server: %v", err)
 	}
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
-		t.Fatalf("listen: %v", err)
+		tb.Fatalf("listen: %v", err)
 	}
 
 	go func() {
@@ -192,14 +206,19 @@ func NewHarnessWithBackend(t *testing.T, handler http.Handler) *TestHarness {
 		tunnels: make(map[string]*TunnelClient),
 	}
 
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		h.Close()
 	})
 
 	return h
 }
+
 func (h *TestHarness) CreateTunnel(t *testing.T, subdomain string) *TunnelClient {
-	t.Helper()
+	return h.CreateTunnelTB(t, subdomain)
+}
+
+func (h *TestHarness) CreateTunnelTB(tb testing.TB, subdomain string) *TunnelClient {
+	tb.Helper()
 
 	endpoint := h.TunnelAddr + "/new_tunnel"
 	if subdomain != "" {
@@ -208,18 +227,18 @@ func (h *TestHarness) CreateTunnel(t *testing.T, subdomain string) *TunnelClient
 
 	resp, err := h.HTTPClient.Post(endpoint, "application/json", nil)
 	if err != nil {
-		t.Fatalf("create tunnel: %v", err)
+		tb.Fatalf("create tunnel: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("create tunnel failed: %s: %s", resp.Status, string(body))
+		tb.Fatalf("create tunnel failed: %s: %s", resp.Status, string(body))
 	}
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode tunnel response: %v", err)
+		tb.Fatalf("decode tunnel response: %v", err)
 	}
 
 	tc := &TunnelClient{

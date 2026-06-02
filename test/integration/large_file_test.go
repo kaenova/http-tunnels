@@ -149,12 +149,16 @@ func TestMaxConcurrentLimit(t *testing.T) {
 
 // ConnectAndRegister connects a client and registers it
 func (h *TestHarness) ConnectAndRegister(t *testing.T, tc *TunnelClient) {
-	t.Helper()
+	h.ConnectAndRegisterTB(t, tc)
+}
+
+func (h *TestHarness) ConnectAndRegisterTB(tb testing.TB, tc *TunnelClient) {
+	tb.Helper()
 
 	wsURL := "ws://" + stripHTTP(h.TunnelAddr) + "/tunnel?domain=" + tc.Domain + "&domain_key=" + tc.DomainKey
 	conn, _, err := h.WSDialer.Dial(wsURL, nil)
 	if err != nil {
-		t.Fatalf("connect main WS: %v", err)
+		tb.Fatalf("connect main WS: %v", err)
 	}
 
 	ws := protocol.NewConnection(conn)
@@ -163,17 +167,17 @@ func (h *TestHarness) ConnectAndRegister(t *testing.T, tc *TunnelClient) {
 		Domain:    tc.Domain,
 		DomainKey: tc.DomainKey,
 	}); err != nil {
-		t.Fatalf("send register: %v", err)
+		tb.Fatalf("send register: %v", err)
 	}
 
 	regFrame, err := ws.ReadFrame()
 	if err != nil {
-		t.Fatalf("read registered: %v", err)
+		tb.Fatalf("read registered: %v", err)
 	}
 	tc.TunnelID = regFrame.GetTunnelId()
 	tc.Config = regFrame.GetConfig()
 
-	go h.runClientLoop(t, ws)
+	go h.runClientLoopTB(tb, ws)
 	time.Sleep(50 * time.Millisecond)
 }
 
@@ -183,6 +187,10 @@ type bufferedClientRequest struct {
 }
 
 func (h *TestHarness) runClientLoop(t *testing.T, ws *protocol.Connection) {
+	h.runClientLoopTB(t, ws)
+}
+
+func (h *TestHarness) runClientLoopTB(tb testing.TB, ws *protocol.Connection) {
 	requests := make(map[string]*bufferedClientRequest)
 	for {
 		frame, err := ws.ReadFrame()
@@ -201,7 +209,7 @@ func (h *TestHarness) runClientLoop(t *testing.T, ws *protocol.Connection) {
 		case protocol.FrameType_REQUEST_END:
 			if req := requests[frame.GetRequestId()]; req != nil {
 				delete(requests, frame.GetRequestId())
-				go h.handleBufferedClientRequest(t, ws, req)
+				go h.handleBufferedClientRequestTB(tb, ws, req)
 			}
 		case protocol.FrameType_REQUEST_CANCEL:
 			delete(requests, frame.GetRequestId())
@@ -210,6 +218,10 @@ func (h *TestHarness) runClientLoop(t *testing.T, ws *protocol.Connection) {
 }
 
 func (h *TestHarness) handleBufferedClientRequest(t *testing.T, mainWS *protocol.Connection, reqFrame *bufferedClientRequest) {
+	h.handleBufferedClientRequestTB(t, mainWS, reqFrame)
+}
+
+func (h *TestHarness) handleBufferedClientRequestTB(tb testing.TB, mainWS *protocol.Connection, reqFrame *bufferedClientRequest) {
 	method := reqFrame.frame.GetMethod()
 	if method == "" {
 		method = http.MethodGet
