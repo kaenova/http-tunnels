@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"log"
@@ -88,7 +89,7 @@ func NewHarnessTB(tb testing.TB) *TestHarness {
 		}
 	}()
 
-	tunnelAddr := "http://" + listener.Addr().String()
+	tunnelAddr := "https://" + listener.Addr().String()
 	time.Sleep(50 * time.Millisecond)
 
 	h := &TestHarness{
@@ -96,10 +97,16 @@ func NewHarnessTB(tb testing.TB) *TestHarness {
 		TunnelSrv:  app,
 		TunnelAddr: tunnelAddr,
 		listener:   listener,
-		HTTPClient: &http.Client{Timeout: 10 * time.Second},
+		HTTPClient: &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
 		WSDialer: websocket.Dialer{
 			EnableCompression: true,
 			HandshakeTimeout:  5 * time.Second,
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 		},
 		tunnels: make(map[string]*TunnelClient),
 	}
@@ -190,7 +197,7 @@ func NewHarnessWithBackendTB(tb testing.TB, handler http.Handler) *TestHarness {
 		}
 	}()
 
-	tunnelAddr := "http://" + listener.Addr().String()
+	tunnelAddr := "https://" + listener.Addr().String()
 	time.Sleep(50 * time.Millisecond)
 
 	h := &TestHarness{
@@ -198,10 +205,16 @@ func NewHarnessWithBackendTB(tb testing.TB, handler http.Handler) *TestHarness {
 		TunnelSrv:  app,
 		TunnelAddr: tunnelAddr,
 		listener:   listener,
-		HTTPClient: &http.Client{Timeout: 120 * time.Second},
+		HTTPClient: &http.Client{
+			Timeout: 120 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
 		WSDialer: websocket.Dialer{
 			EnableCompression: true,
 			HandshakeTimeout:  5 * time.Second,
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 		},
 		tunnels: make(map[string]*TunnelClient),
 	}

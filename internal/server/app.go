@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -82,13 +83,27 @@ func (a *App) Handler() http.Handler {
 
 // Serve starts the HTTP server on the given listener
 func (a *App) Serve(listener net.Listener) error {
+	certificate, source, err := loadServerTLSCertificate(a.config)
+	if err != nil {
+		return fmt.Errorf("loading server TLS certificate failed: %w", err)
+	}
+
 	a.server = &http.Server{
 		Handler:           a.Handler(),
 		ReadHeaderTimeout: 15 * time.Second,
+		TLSConfig: &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{certificate},
+		},
 	}
 
-	log.Printf("Tunnel server listening on %s", listener.Addr().String())
-	return a.server.Serve(listener)
+	if source == "self-signed" {
+		log.Printf("Tunnel server using generated self-signed TLS certificate for direct HTTPS/H2 on %s", listener.Addr().String())
+	} else {
+		log.Printf("Tunnel server using configured TLS certificate files for direct HTTPS/H2 on %s", listener.Addr().String())
+	}
+	log.Printf("Tunnel server listening with TLS on %s", listener.Addr().String())
+	return a.server.ServeTLS(listener, "", "")
 }
 
 // Shutdown gracefully shuts down the server

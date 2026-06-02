@@ -13,7 +13,7 @@ The tunnel transport is now **HTTP/2-first with websocket fallback**.
 - **Websocket** keeps the existing protobuf frame protocol and round-robin scheduler.
 - **HTTP/2** now uses a separate H2-native worker-stream protocol instead of reusing websocket control/session semantics.
 
-The Go server embeds the built admin dashboard assets from `cmd/server/web/dist`.
+The Go server embeds the built admin dashboard assets from `cmd/server/web/dist` and serves them over a **direct TLS listener**. If no certificate files are configured, the server generates a self-signed certificate for local/testing use.
 
 ---
 
@@ -44,9 +44,11 @@ The server has four responsibilities:
 1. create and validate tunnel registrations
 2. proxy tunneled HTTP traffic over a single websocket connection per active domain
 3. persist analytics and admin metadata in SQLite
-4. serve the authenticated admin SPA and JSON admin API
+4. serve the authenticated admin SPA and JSON admin API over direct TLS
 
 ### Public server routes
+
+These routes are served on the server's direct HTTPS listener.
 
 - `POST /new_tunnel` - create a tunnel registration
 - `GET /tunnel` - websocket connection from the tunnel client
@@ -94,6 +96,8 @@ Frame types remain:
 ### HTTP/2 path
 
 The HTTP/2 transport is intentionally separate from the websocket interface.
+
+It requires the app to receive the request on its **direct TLS/H2 listener**. If deployment infrastructure downgrades upstream requests to HTTP/1.1 before they reach the app, the native H2 worker path will not activate and clients should fall back to websocket.
 
 It uses a pool of **dedicated worker streams** on one reused H2 connection:
 

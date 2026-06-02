@@ -14,6 +14,8 @@ type Config struct {
 	WebPassword                  string
 	SessionSecret                string
 	CookieSecure                 bool
+	TLSCertPath                  string
+	TLSKeyPath                   string
 	MaxConcurrentRequests        int
 	DefaultRequestTimeout        int
 	DefaultBackendTimeout        int
@@ -33,7 +35,7 @@ func LoadConfig() Config {
 	}
 
 	return Config{
-		ListenAddr:                   getEnv("LISTEN_ADDR", ":80"),
+		ListenAddr:                   getEnv("LISTEN_ADDR", ":8443"),
 		DBPath:                       getEnv("DB_PATH", "http-tunnels.db"),
 		TunnelDomain:                 tunnelDomain,
 		MaxConcurrentRequests:        getEnvInt("MAX_CONCURRENT_REQUESTS", 500),
@@ -46,7 +48,9 @@ func LoadConfig() Config {
 		DefaultReconnectMaxRetries:   getEnvInt("DEFAULT_RECONNECT_MAX_RETRIES", 0),
 		WebPassword:                  os.Getenv("WEB_PASSWORD"),
 		SessionSecret:                getEnv("WEB_SESSION_SECRET", os.Getenv("WEB_PASSWORD")),
-		CookieSecure:                 getEnvBool("COOKIE_SECURE", false),
+		CookieSecure:                 getEnvBool("COOKIE_SECURE", true),
+		TLSCertPath:                  os.Getenv("TLS_CERT_PATH"),
+		TLSKeyPath:                   os.Getenv("TLS_KEY_PATH"),
 		ServerMessage:                os.Getenv("SERVER_MESSAGE"),
 	}
 }

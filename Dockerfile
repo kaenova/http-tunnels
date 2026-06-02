@@ -49,11 +49,11 @@ COPY --from=builder /app/cmd/server/web/dist ./cmd/server/web/dist
 
 VOLUME ["/data"]
 
-EXPOSE 80
+EXPOSE 443
 
-ENV LISTEN_ADDR=:80
+ENV LISTEN_ADDR=:443
 ENV DB_PATH=/data/http-tunnels.db
-ENV COOKIE_SECURE=false
+ENV COOKIE_SECURE=true
 
 ENTRYPOINT ["./main"]
 CMD []

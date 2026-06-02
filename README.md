@@ -146,7 +146,12 @@ go build -o http-tunnels-server ./cmd/server
 
 ### 3. Run the server
 
+The server now listens with **direct TLS** on a single port.
+
+If `TLS_CERT_PATH` and `TLS_KEY_PATH` are not set, it generates a **self-signed certificate** automatically for local/testing use.
+
 ```bash
+LISTEN_ADDR=:8443 \
 WEB_PASSWORD=change-me \
 WEB_SESSION_SECRET=change-me-too \
 ./http-tunnels-server
@@ -154,8 +159,10 @@ WEB_SESSION_SECRET=change-me-too \
 
 Then open:
 
-- `http://<your-host>/ping`
-- `http://<your-host>/admin/auth/login`
+- `https://<your-host>:8443/ping`
+- `https://<your-host>:8443/admin/auth/login`
+
+For self-signed local testing, `curl -k` or a locally trusted certificate may be required.
 
 ---
 
@@ -165,9 +172,11 @@ The Docker build automatically builds the Bun admin app and embeds it into the G
 
 The runtime image now ships with these default server environment variables:
 
-- `LISTEN_ADDR=:80`
+- `LISTEN_ADDR=:443`
 - `DB_PATH=/data/http-tunnels.db`
-- `COOKIE_SECURE=false`
+- `COOKIE_SECURE=true`
+
+Provide `TLS_CERT_PATH` and `TLS_KEY_PATH` for a real certificate in production, or let the server fall back to its generated self-signed certificate for internal/testing use.
 
 ```bash
 docker build -t http-tunnels .
@@ -175,10 +184,13 @@ docker build -t http-tunnels .
 
 ```bash
 docker run --rm \
-  -p 80:80 \
+  -p 443:443 \
   -e WEB_PASSWORD=change-me \
   -e WEB_SESSION_SECRET=change-me-too \
+  -e TLS_CERT_PATH=/certs/fullchain.pem \
+  -e TLS_KEY_PATH=/certs/privkey.pem \
   -v $(pwd)/data:/data \
+  -v $(pwd)/certs:/certs:ro \
   http-tunnels
 ```
 
@@ -218,20 +230,23 @@ Main admin routes:
 | Variable | Default | Description |
 |---|---|---|
 | `TUNNEL_HOST` | `https://t.kaenova.my.id` | Default client tunnel host. |
-| `LISTEN_ADDR` | `:80` | Server listen address. The Docker image sets this explicitly. |
+| `LISTEN_ADDR` | `:8443` | Direct TLS listen address. The Docker image overrides this to `:443`. |
 | `DB_PATH` | `http-tunnels.db` | SQLite database file path. The Docker image overrides this to `/data/http-tunnels.db`. |
 | `SERVER_MESSAGE` | _empty_ | Optional message returned during tunnel registration. |
 | `WEB_PASSWORD` | _empty_ | Required to log in to the admin dashboard. |
 | `WEB_SESSION_SECRET` | `WEB_PASSWORD` | HMAC secret used for the admin auth cookie. |
-| `COOKIE_SECURE` | `false` | Set `true` when serving the admin app behind HTTPS. The Docker image defaults it to `false`. |
+| `COOKIE_SECURE` | `true` | Secure cookie flag for the admin app. The Docker image defaults it to `true`. |
+
+| `TLS_CERT_PATH` | _empty_ | Optional PEM certificate path for the direct TLS listener. |
+| `TLS_KEY_PATH` | _empty_ | Optional PEM private key path for the direct TLS listener. When both TLS paths are empty, the server generates a self-signed certificate automatically. |
 
 ---
 
 ## Streaming behavior
 
-The tunnel protocol now streams request and response bodies in chunks over a long-lived tunnel connection. The client prefers HTTP/2, keeps a control stream for registration and heartbeat, and uses native HTTP/2 request streams for concurrent tunneled traffic. When HTTP/2 is unavailable, it automatically falls back to websocket.
+The tunnel protocol now streams request and response bodies in chunks over a long-lived tunnel connection. The client prefers native HTTP/2 worker streams on a direct TLS/H2 listener and automatically falls back to websocket when HTTP/2 is unavailable.
 
-The client and server keep the active tunnel alive with heartbeat `PING` / `PONG` frames during idle periods. Websocket traffic still uses round-robin frame scheduling so one large response cannot monopolize the tunnel, while HTTP/2 traffic uses native H2 multiplexing across concurrent request streams.
+The client and server keep the active websocket tunnel alive with heartbeat `PING` / `PONG` frames during idle periods. Websocket traffic still uses round-robin frame scheduling so one large response cannot monopolize the tunnel, while HTTP/2 traffic uses native H2 multiplexing across concurrent request streams.
 
 That means the service can forward:
 
@@ -258,6 +273,8 @@ bun dev
 ```bash
 go run ./cmd/server
 ```
+
+By default the backend serves direct TLS on `:8443` with a generated self-signed certificate unless `TLS_CERT_PATH` and `TLS_KEY_PATH` are provided.
 
 ### Client
 

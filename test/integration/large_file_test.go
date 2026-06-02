@@ -155,7 +155,7 @@ func (h *TestHarness) ConnectAndRegister(t *testing.T, tc *TunnelClient) {
 func (h *TestHarness) ConnectAndRegisterTB(tb testing.TB, tc *TunnelClient) {
 	tb.Helper()
 
-	wsURL := "ws://" + stripHTTP(h.TunnelAddr) + "/tunnel?domain=" + tc.Domain + "&domain_key=" + tc.DomainKey
+	wsURL := "ws" + strings.TrimPrefix(h.TunnelAddr, "http") + "/tunnel?domain=" + tc.Domain + "&domain_key=" + tc.DomainKey
 	conn, _, err := h.WSDialer.Dial(wsURL, nil)
 	if err != nil {
 		tb.Fatalf("connect main WS: %v", err)
