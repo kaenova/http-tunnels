@@ -56,17 +56,17 @@ export function TunnelsPage() {
   return (
     <div className="flex flex-col">
       <PageHeader
-        title="Active Subdomain"
-        description="Paginated tunnel registrations with data transfer metrics, request counts, and admin actions."
+        title="Active Tunnels"
+        description="Currently connected tunnel domains with data transfer metrics, request counts, and admin actions."
         breadcrumbs={[
           { label: "Admin", href: "/admin" },
-          { label: "Active Subdomain" },
+          { label: "Active Tunnels" },
         ]}
       />
       <div className="flex flex-col gap-4 p-6">
         <TunnelTable
-          title="Registered and active tunnels"
-          description="Each row shows the tunnel subdomain, request-response count, transferred bytes, and lifetime."
+          title="Connected tunnels"
+          description="Each row shows a currently connected tunnel domain, its request count, transferred bytes, and lifetime."
           tunnels={tunnelsQuery.data.items}
           onDelete={(tunnel) => setSelectedTunnel(tunnel)}
           deletingId={deleteMutation.isPending ? selectedTunnel?.id : undefined}

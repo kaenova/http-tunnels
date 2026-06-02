@@ -20,13 +20,15 @@ import (
 
 // App is the main tunnel server application
 type App struct {
-	config       Config
-	store        *Store
-	pending      *PendingStore
-	assets       fs.FS
-	assetHandler http.Handler
-	sessions     *TunnelSessionStore
-	server       *http.Server
+	config        Config
+	store         *Store
+	pending       *PendingStore
+	assets        fs.FS
+	assetHandler  http.Handler
+	sessions      *TunnelSessionStore
+	server        *http.Server
+	reconcileCtx  context.Context
+	reconcileStop context.CancelFunc
 }
 
 // NewApp creates a new tunnel server application
@@ -36,16 +38,20 @@ func NewApp(config Config, assets fs.FS) (*App, error) {
 		return nil, fmt.Errorf("opening store: %w", err)
 	}
 
+	reconcileCtx, reconcileStop := context.WithCancel(context.Background())
 	app := &App{
-		config:   config,
-		store:    store,
-		pending:  NewPendingStore(time.Duration(config.DefaultRequestTimeout) * time.Millisecond),
-		assets:   assets,
-		sessions: NewTunnelSessionStore(),
+		config:        config,
+		store:         store,
+		pending:       NewPendingStore(time.Duration(config.DefaultRequestTimeout) * time.Millisecond),
+		assets:        assets,
+		sessions:      NewTunnelSessionStore(),
+		reconcileCtx:  reconcileCtx,
+		reconcileStop: reconcileStop,
 	}
 	if assets != nil {
 		app.assetHandler = http.FileServer(http.FS(assets))
 	}
+	go app.reconcileTunnelStateLoop()
 	return app, nil
 }
 
@@ -83,6 +89,9 @@ func (a *App) Serve(listener net.Listener) error {
 // Shutdown gracefully shuts down the server
 func (a *App) Shutdown() error {
 	a.pending.Stop()
+	if a.reconcileStop != nil {
+		a.reconcileStop()
+	}
 	if a.server != nil {
 		return a.server.Close()
 	}
@@ -92,6 +101,9 @@ func (a *App) Shutdown() error {
 // Close closes the server and store
 func (a *App) Close() error {
 	a.pending.Stop()
+	if a.reconcileStop != nil {
+		a.reconcileStop()
+	}
 	if a.store != nil {
 		a.store.Close()
 	}

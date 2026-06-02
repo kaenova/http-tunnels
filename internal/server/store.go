@@ -433,7 +433,7 @@ func (s *Store) ListActiveTunnels(ctx context.Context, page, pageSize int) (Tunn
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(1)
 		FROM tunnels
-		WHERE deleted_at IS NULL AND state IN ('pending', 'active')
+		WHERE deleted_at IS NULL AND state = 'active'
 	`).Scan(&totalItems); err != nil {
 		return TunnelListResponse{}, fmt.Errorf("counting tunnels failed: %w", err)
 	}
@@ -442,7 +442,7 @@ func (s *Store) ListActiveTunnels(ctx context.Context, page, pageSize int) (Tunn
 		SELECT id, domain, requested_subdomain, state, created_at, connected_at, disconnected_at, last_activity_at,
 		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, deleted_at
 		FROM tunnels
-		WHERE deleted_at IS NULL AND state IN ('pending', 'active')
+		WHERE deleted_at IS NULL AND state = 'active'
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
 	`, pageSize, (page-1)*pageSize)
@@ -637,7 +637,7 @@ func (s *Store) listLatestActiveTunnels(ctx context.Context, limit int) ([]Tunne
 		SELECT id, domain, requested_subdomain, state, created_at, connected_at, disconnected_at, last_activity_at,
 		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, deleted_at
 		FROM tunnels
-		WHERE deleted_at IS NULL AND state IN ('pending', 'active')
+		WHERE deleted_at IS NULL AND state = 'active'
 		ORDER BY created_at DESC
 		LIMIT ?
 	`, limit)
@@ -646,6 +646,44 @@ func (s *Store) listLatestActiveTunnels(ctx context.Context, limit int) ([]Tunne
 	}
 	defer rows.Close()
 	return collectTunnelRecords(rows)
+}
+
+func (s *Store) ReconcileActiveTunnelStates(ctx context.Context, activeTunnelIDs []string) error {
+	now := time.Now().UTC()
+	baseQuery := `
+		UPDATE tunnels
+		SET state = 'disconnected',
+		    disconnected_at = COALESCE(disconnected_at, ?),
+		    last_activity_at = COALESCE(last_activity_at, ?)
+		WHERE deleted_at IS NULL AND state = 'active'
+	`
+	args := []any{now, now}
+	if len(activeTunnelIDs) > 0 {
+		placeholders := make([]string, len(activeTunnelIDs))
+		for i, tunnelID := range activeTunnelIDs {
+			placeholders[i] = "?"
+			args = append(args, tunnelID)
+		}
+		baseQuery += ` AND id NOT IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	if err := s.execContextBusyRetry(ctx, baseQuery, args...); err != nil {
+		return fmt.Errorf("reconciling active tunnels failed: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ExpirePendingTunnels(ctx context.Context, olderThan time.Time) error {
+	err := s.execContextBusyRetry(ctx, `
+		UPDATE tunnels
+		SET state = 'disconnected',
+		    disconnected_at = COALESCE(disconnected_at, ?),
+		    last_activity_at = COALESCE(last_activity_at, ?)
+		WHERE deleted_at IS NULL AND state = 'pending' AND created_at < ?
+	`, olderThan, olderThan, olderThan)
+	if err != nil {
+		return fmt.Errorf("expiring pending tunnels failed: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) listRecentRequests(ctx context.Context, limit int) ([]RequestResponseLog, error) {

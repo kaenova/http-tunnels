@@ -63,7 +63,7 @@ export function TunnelTable({
               </EmptyMedia>
               <EmptyTitle>No active tunnels</EmptyTitle>
               <EmptyDescription>
-                Register a tunnel and connect the client to see active subdomains here.
+                Connect a tunnel client to see active tunnel domains here.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

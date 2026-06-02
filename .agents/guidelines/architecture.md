@@ -116,6 +116,16 @@ Key fields:
 - `requested_subdomain`
 - `domain_key_hash`
 - `state`
+
+### Tunnel state reconciliation
+
+The server keeps a lightweight reconciler loop for admin correctness:
+
+- tunnels shown in the active-tunnels admin list should be truly `active`, not merely `pending`
+- `pending` tunnels that never establish a websocket connection are expired to `disconnected`
+- `active` tunnels that no longer have an in-memory websocket session are reconciled back to `disconnected`
+
+This keeps the admin dashboard aligned with real websocket session state, especially after crashes or stale registrations.
 - `created_at`
 - `connected_at`
 - `disconnected_at`
