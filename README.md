@@ -14,9 +14,10 @@ If you want to support the hosted public tunnel service, consider donating via [
 ## Features
 
 - Create tunnels with a custom or random subdomain.
-- Stream responses through the tunnel without buffering the full body first.
+- Stream requests and responses through a single websocket tunnel without buffering the full body first.
 - Support **SSE / event-stream** workloads.
 - Support **binary streaming** for file downloads and other non-text payloads.
+- Fairly interleave concurrent streamed responses with round-robin websocket scheduling.
 - Persist tunnel registrations, tunnel creation attempts, and request-response analytics.
 - Browse active tunnels and detailed logs from `/admin`.
 - Authenticate the admin dashboard with `WEB_PASSWORD`.
@@ -29,7 +30,7 @@ If you want to support the hosted public tunnel service, consider donating via [
 - `http_tunnels.go` - CLI entrypoint for the tunnel client.
 - `cmd/server` - tunnel server entrypoint and embedded admin web assets.
 - `cmd/server/web` - Bun/Vite React admin dashboard source.
-- `internal/client` - tunnel client logic and self-update implementation.
+- `internal/client` - tunnel client logic, request/response multiplexing, and reconnect helpers.
 - `internal/server` - tunnel server, admin API, auth, and SQLite store.
 - `internal/protocol` - shared tunnel websocket streaming protocol.
 - `.agents/guidelines` - implementation patterns for this repository.
@@ -215,7 +216,9 @@ Main admin routes:
 
 ## Streaming behavior
 
-The tunnel protocol now streams request and response bodies in chunks over the websocket tunnel.
+The tunnel protocol now streams request and response bodies in chunks over a single long-lived websocket tunnel.
+
+The client and server keep that websocket alive with heartbeat `PING` / `PONG` frames during idle periods, and the client schedules concurrent response streams in round-robin order so one large response cannot monopolize the tunnel.
 
 That means the service can forward:
 

@@ -2,31 +2,65 @@ package server
 
 import (
 	"errors"
-	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // ErrRequestTimeout is returned when a pending request times out
 var ErrRequestTimeout = errors.New("request timeout waiting for client")
 
-// PendingRequest represents a request waiting for client to open a dedicated WS
+// PendingRequest represents a request waiting for client response frames.
 type PendingRequest struct {
-	ID          string
-	TunnelID    string
-	Method      string
-	Path        string
-	Headers     map[string][]string
-	ContentLen  int64
-	BodyReader  *io.PipeReader
-	ResponseCh  chan *PendingResponse
-	ErrorCh     chan error
-	bodyCh      chan []byte
-	CreatedAt   time.Time
-	LogEntry    *RequestResponseLog // for request/response logging
+	ID         string
+	TunnelID   string
+	Method     string
+	Path       string
+	Headers    map[string][]string
+	ContentLen int64
+	ResponseCh chan *PendingResponse
+	ErrorCh    chan error
+	bodyCh     chan []byte
+	CreatedAt  time.Time
+	LogEntry   *RequestResponseLog // for request/response logging
+
+	responseStarted atomic.Bool
+	closeBodyOnce   sync.Once
 }
 
-// PendingResponse is the response received from the client via dedicated WS
+func (r *PendingRequest) MarkResponseStarted() {
+	if r != nil {
+		r.responseStarted.Store(true)
+	}
+}
+
+func (r *PendingRequest) ResponseStarted() bool {
+	return r != nil && r.responseStarted.Load()
+}
+
+func (r *PendingRequest) CloseBody() {
+	if r == nil {
+		return
+	}
+	r.closeBodyOnce.Do(func() {
+		if r.bodyCh != nil {
+			close(r.bodyCh)
+		}
+	})
+}
+
+func (r *PendingRequest) Fail(err error) {
+	if r == nil || err == nil {
+		return
+	}
+	select {
+	case r.ErrorCh <- err:
+	default:
+	}
+	r.CloseBody()
+}
+
+// PendingResponse is the response received from the client via the main WS.
 type PendingResponse struct {
 	Status  int
 	Headers map[string][]string
@@ -34,7 +68,7 @@ type PendingResponse struct {
 	Error   error
 }
 
-// PendingStore manages pending requests with timeout cleanup
+// PendingStore manages pending requests with timeout cleanup.
 type PendingStore struct {
 	mu       sync.RWMutex
 	requests map[string]*PendingRequest
@@ -87,6 +121,19 @@ func (ps *PendingStore) CleanupByTunnel(tunnelID string) {
 	}
 }
 
+// FailByTunnel fails and removes all pending requests for a given tunnel.
+func (ps *PendingStore) FailByTunnel(tunnelID string, err error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	for id, req := range ps.requests {
+		if req.TunnelID != tunnelID {
+			continue
+		}
+		delete(ps.requests, id)
+		req.Fail(err)
+	}
+}
+
 // Count returns the total number of pending requests
 func (ps *PendingStore) Count() int {
 	ps.mu.RLock()
@@ -131,13 +178,11 @@ func (ps *PendingStore) cleanupExpired() {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	for id, req := range ps.requests {
+		if req.ResponseStarted() {
+			continue
+		}
 		if now.Sub(req.CreatedAt) > ps.timeout {
-			if req.ErrorCh != nil {
-				select {
-				case req.ErrorCh <- ErrRequestTimeout:
-				default:
-				}
-			}
+			req.Fail(ErrRequestTimeout)
 			delete(ps.requests, id)
 		}
 	}

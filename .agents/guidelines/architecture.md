@@ -64,8 +64,10 @@ That prevents admin or server paths from stealing requests that belong to a live
 
 Shared protocol types live in `internal/protocol`.
 
-The websocket transport uses typed frames:
+The websocket transport uses typed frames over a **single long-lived websocket per active tunnel**:
 
+- `register`
+- `registered`
 - `request_start`
 - `request_body`
 - `request_end`
@@ -74,6 +76,8 @@ The websocket transport uses typed frames:
 - `response_body`
 - `response_end`
 - `response_error`
+- `ping`
+- `pong`
 
 ### Why this matters
 
@@ -88,9 +92,11 @@ The current pattern is chunked streaming on both sides.
 ### Invariants
 
 - keep forwarding order per request intact
+- multiplex concurrent response streams fairly; the current pattern is **round-robin per request id** so one response cannot saturate the websocket
 - flush streamed response chunks on the server side when the writer supports `http.Flusher`
 - allow long-lived streams to remain open until the request context is cancelled or the stream ends
 - keep request cancellation support so server-side disconnects can stop client-side destination requests
+- keep heartbeat `ping` / `pong` support so idle tunnel connections stay alive and dead peers are detected
 
 ---
 

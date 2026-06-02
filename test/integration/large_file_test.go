@@ -158,12 +158,13 @@ func (h *TestHarness) ConnectAndRegister(t *testing.T, tc *TunnelClient) {
 	}
 
 	ws := protocol.NewConnection(conn)
-
-	ws.Send(&protocol.Frame{
+	if err := ws.Send(&protocol.Frame{
 		Type:      protocol.FrameType_REGISTER,
 		Domain:    tc.Domain,
 		DomainKey: tc.DomainKey,
-	})
+	}); err != nil {
+		t.Fatalf("send register: %v", err)
+	}
 
 	regFrame, err := ws.ReadFrame()
 	if err != nil {
@@ -172,73 +173,58 @@ func (h *TestHarness) ConnectAndRegister(t *testing.T, tc *TunnelClient) {
 	tc.TunnelID = regFrame.GetTunnelId()
 	tc.Config = regFrame.GetConfig()
 
-	// Start request handler
-	go func() {
-		for {
-			frame, err := ws.ReadFrame()
-			if err != nil {
-				return
-			}
-			if frame.GetType() == protocol.FrameType_REQUEST {
-				h.handleClientRequest(t, tc, ws, frame)
-			}
-		}
-	}()
-
+	go h.runClientLoop(t, ws)
 	time.Sleep(50 * time.Millisecond)
 }
 
-func (h *TestHarness) handleClientRequest(t *testing.T, tc *TunnelClient, mainWS *protocol.Connection, frame *protocol.Frame) {
-	dedWSURL := "ws://" + stripHTTP(h.TunnelAddr) + "/tunnel-response?request_id=" + frame.GetRequestId() + "&domain_key=" + tc.DomainKey
-	dedConn, _, err := h.WSDialer.Dial(dedWSURL, nil)
-	if err != nil {
-		mainWS.Send(&protocol.Frame{
-			Type:      protocol.FrameType_REQUEST_ERROR,
-			RequestId: frame.GetRequestId(),
-			Status:    502,
-			Error:     err.Error(),
-		})
-		return
-	}
-	defer dedConn.Close()
+type bufferedClientRequest struct {
+	frame *protocol.Frame
+	body  []byte
+}
 
-	dedWS := protocol.NewConnection(dedConn)
-
-	// Read body chunks and build the body
-	var reqBody []byte
+func (h *TestHarness) runClientLoop(t *testing.T, ws *protocol.Connection) {
+	requests := make(map[string]*bufferedClientRequest)
 	for {
-		bodyFrame, err := dedWS.ReadFrame()
-		if err != nil || bodyFrame.GetType() == protocol.FrameType_BODY_END {
-			break
+		frame, err := ws.ReadFrame()
+		if err != nil {
+			return
 		}
-		if bodyFrame.GetType() == protocol.FrameType_BODY {
-			reqBody = append(reqBody, bodyFrame.GetChunk()...)
+		switch frame.GetType() {
+		case protocol.FrameType_PING:
+			_ = ws.Send(&protocol.Frame{Type: protocol.FrameType_PONG})
+		case protocol.FrameType_REQUEST_START:
+			requests[frame.GetRequestId()] = &bufferedClientRequest{frame: frame}
+		case protocol.FrameType_REQUEST_BODY:
+			if req := requests[frame.GetRequestId()]; req != nil {
+				req.body = append(req.body, frame.GetChunk()...)
+			}
+		case protocol.FrameType_REQUEST_END:
+			if req := requests[frame.GetRequestId()]; req != nil {
+				delete(requests, frame.GetRequestId())
+				go h.handleBufferedClientRequest(t, ws, req)
+			}
+		case protocol.FrameType_REQUEST_CANCEL:
+			delete(requests, frame.GetRequestId())
 		}
 	}
+}
 
-	// Proxy to backend
-	method := frame.GetMethod()
+func (h *TestHarness) handleBufferedClientRequest(t *testing.T, mainWS *protocol.Connection, reqFrame *bufferedClientRequest) {
+	method := reqFrame.frame.GetMethod()
 	if method == "" {
-		method = "GET"
+		method = http.MethodGet
 	}
-	path := frame.GetPath()
+	path := reqFrame.frame.GetPath()
 	if path == "" {
 		path = "/"
 	}
 
-	var bodyReader io.Reader
-	if len(reqBody) > 0 {
-		bodyReader = io.NopCloser(io.Reader(io.NopCloser(nil)))
-		bodyReader = strings.NewReader(string(reqBody))
-	}
-	_ = bodyReader
-
-	req, _ := http.NewRequest(method, h.Backend.URL+path, strings.NewReader(string(reqBody)))
+	req, _ := http.NewRequest(method, h.Backend.URL+path, strings.NewReader(string(reqFrame.body)))
 	resp, err := h.HTTPClient.Do(req)
 	if err != nil {
-		dedWS.Send(&protocol.Frame{
+		_ = mainWS.Send(&protocol.Frame{
 			Type:      protocol.FrameType_RESPONSE_ERROR,
-			RequestId: frame.GetRequestId(),
+			RequestId: reqFrame.frame.GetRequestId(),
 			Status:    502,
 			Error:     err.Error(),
 		})
@@ -251,9 +237,9 @@ func (h *TestHarness) handleClientRequest(t *testing.T, tc *TunnelClient, mainWS
 		respHeaders[k] = &protocol.StringList{Values: vals}
 	}
 
-	dedWS.Send(&protocol.Frame{
+	_ = mainWS.Send(&protocol.Frame{
 		Type:            protocol.FrameType_RESPONSE_START,
-		RequestId:       frame.GetRequestId(),
+		RequestId:       reqFrame.frame.GetRequestId(),
 		Status:          int32(resp.StatusCode),
 		ResponseHeaders: respHeaders,
 	})
@@ -264,20 +250,29 @@ func (h *TestHarness) handleClientRequest(t *testing.T, tc *TunnelClient, mainWS
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
-			dedWS.Send(&protocol.Frame{
+			_ = mainWS.Send(&protocol.Frame{
 				Type:      protocol.FrameType_RESPONSE_BODY,
-				RequestId: frame.GetRequestId(),
+				RequestId: reqFrame.frame.GetRequestId(),
 				Chunk:     chunk,
 			})
 		}
-		if err != nil {
+		if err == io.EOF {
 			break
+		}
+		if err != nil {
+			_ = mainWS.Send(&protocol.Frame{
+				Type:      protocol.FrameType_RESPONSE_ERROR,
+				RequestId: reqFrame.frame.GetRequestId(),
+				Status:    502,
+				Error:     err.Error(),
+			})
+			return
 		}
 	}
 
-	dedWS.Send(&protocol.Frame{
+	_ = mainWS.Send(&protocol.Frame{
 		Type:      protocol.FrameType_RESPONSE_END,
-		RequestId: frame.GetRequestId(),
+		RequestId: reqFrame.frame.GetRequestId(),
 	})
 }
 

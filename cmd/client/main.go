@@ -6,6 +6,6 @@ import (
 )
 
 func main() {
-	fmt.Println("http-tunnels v5 client - use the root binary: go run . <backend_url>")
+	fmt.Println("http-tunnels v6 client - use the root binary: go run . <backend_url>")
 	os.Exit(1)
 }

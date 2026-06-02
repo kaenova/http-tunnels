@@ -55,22 +55,19 @@ message ReconnectConfig {
 enum FrameType {
   FRAME_TYPE_UNSPECIFIED = 0;
 
-  // Main WS (signalling)
+  // Session / control
   REGISTER = 1;
   REGISTERED = 2;
-  REQUEST = 3;
-  REQUEST_ACK = 4;
-  REQUEST_ERROR = 5;
+  REQUEST_START = 3;
+  REQUEST_CANCEL = 4;
   PING = 6;
   PONG = 7;
 
-  // Dedicated WS (per-request)
-  BODY = 10;
-  BODY_END = 11;
+  // Request / response streaming over the main websocket
+  REQUEST_BODY = 10;
+  REQUEST_END = 11;
   RESPONSE_START = 12;
   RESPONSE_BODY = 13;
   RESPONSE_END = 14;
   RESPONSE_ERROR = 15;
-  WS_DATA = 16;
-  WS_CLOSE = 17;
 }

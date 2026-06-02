@@ -56,7 +56,6 @@ func (a *App) Serve(listener net.Listener) error {
 	mux.HandleFunc("/ping", a.handlePing)
 	mux.HandleFunc("/new_tunnel", a.handleNewTunnel)
 	mux.HandleFunc("/tunnel", a.handleTunnelWS)
-	mux.HandleFunc("/tunnel-response", a.handleTunnelResponseWS)
 
 	// Static assets (referenced by admin SPA at root paths)
 	mux.HandleFunc("/assets/", a.serveAsset)

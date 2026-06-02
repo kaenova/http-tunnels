@@ -1,5 +1,7 @@
 # http-tunnels v5 — Implementation Plan
 
+> Historical planning document for the old v5 multi-websocket design. The current implementation has moved to the v6 single-websocket tunnel protocol with multiplexed request/response frames, round-robin response scheduling, and heartbeat `PING` / `PONG` handling.
+
 ## 1. Overview
 
 v5 kembali ke **WebSocket-based tunneling** (dari v2), dengan perubahan arsitektur utama: **multiplexing via multiple WebSocket connections** per request, bukan single WS dengan JSON frame multiplexing.

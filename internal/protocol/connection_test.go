@@ -57,7 +57,7 @@ func TestConnectionSendReceive(t *testing.T) {
 
 	// Send request
 	req := &Frame{
-		Type:      FrameType_REQUEST,
+		Type:      FrameType_REQUEST_START,
 		RequestId: "test_001",
 		Method:    "GET",
 		Path:      "/api/test",
@@ -122,7 +122,7 @@ func TestConnectionBinaryFrame(t *testing.T) {
 	c := NewConnection(conn)
 
 	frame := &Frame{
-		Type:      FrameType_BODY,
+		Type:      FrameType_REQUEST_BODY,
 		RequestId: "bin_001",
 		Chunk:     []byte{0x00, 0x01, 0x02, 0xFF},
 	}

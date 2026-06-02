@@ -149,15 +149,15 @@ func TestHTTPRequestThroughTunnel(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if frame.GetType() == protocol.FrameType_REQUEST {
+			if frame.GetType() == protocol.FrameType_REQUEST_START {
 				t.Logf("Got REQUEST: %s %s (id=%s)", frame.GetMethod(), frame.GetPath(), frame.GetRequestId())
 
 				// Proxy to backend
 				req, _ := http.NewRequest(frame.GetMethod(), h.Backend.URL+frame.GetPath(), nil)
 				resp, err := h.HTTPClient.Do(req)
 				if err != nil {
-					ws.Send(&protocol.Frame{
-						Type:      protocol.FrameType_REQUEST_ERROR,
+					_ = ws.Send(&protocol.Frame{
+						Type:      protocol.FrameType_RESPONSE_ERROR,
 						RequestId: frame.GetRequestId(),
 						Status:    502,
 						Error:     err.Error(),
@@ -173,49 +173,23 @@ func TestHTTPRequestThroughTunnel(t *testing.T) {
 					respHeaders[k] = &protocol.StringList{Values: vals}
 				}
 
-				// Connect dedicated WS and send response
-				dedWSURL := "ws" + strings.TrimPrefix(h.TunnelAddr, "http") + "/tunnel-response?request_id=" + url.QueryEscape(frame.GetRequestId()) + "&domain_key=" + url.QueryEscape(tunnel.DomainKey)
-				dedConn, _, err := h.WSDialer.Dial(dedWSURL, nil)
-				if err != nil {
-					t.Logf("dedicated WS connect error: %v", err)
-					ws.Send(&protocol.Frame{
-						Type:      protocol.FrameType_REQUEST_ERROR,
-						RequestId: frame.GetRequestId(),
-						Status:    502,
-						Error:     err.Error(),
-					})
-					continue
-				}
-
-				dedWS := protocol.NewConnection(dedConn)
-
-				// Read body chunks (if any)
-				for {
-					bodyFrame, err := dedWS.ReadFrame()
-					if err != nil || bodyFrame.GetType() == protocol.FrameType_BODY_END {
-						break
-					}
-				}
-
-				// Send response
-				dedWS.Send(&protocol.Frame{
+				_ = ws.Send(&protocol.Frame{
 					Type:            protocol.FrameType_RESPONSE_START,
 					RequestId:       frame.GetRequestId(),
 					Status:          int32(resp.StatusCode),
 					ResponseHeaders: respHeaders,
 				})
 				if len(body) > 0 {
-					dedWS.Send(&protocol.Frame{
+					_ = ws.Send(&protocol.Frame{
 						Type:      protocol.FrameType_RESPONSE_BODY,
 						RequestId: frame.GetRequestId(),
 						Chunk:     body,
 					})
 				}
-				dedWS.Send(&protocol.Frame{
+				_ = ws.Send(&protocol.Frame{
 					Type:      protocol.FrameType_RESPONSE_END,
 					RequestId: frame.GetRequestId(),
 				})
-				dedWS.Close()
 			}
 		}
 	}()

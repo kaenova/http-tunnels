@@ -68,6 +68,7 @@ func (c *Connection) ReadFrame() (*Frame, error) {
 	if err != nil {
 		return nil, err
 	}
+	_ = c.conn.SetReadDeadline(time.Now().Add(DefaultPongWait))
 
 	var frame Frame
 	if err := proto.Unmarshal(data, &frame); err != nil {
