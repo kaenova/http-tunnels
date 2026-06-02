@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"net/http"
+	"strings"
 
 	"github.com/kaenova/http-tunnels/internal/protocol"
 )
@@ -50,4 +51,8 @@ func contentTypeFromHeaders(headers map[string][]string) string {
 		return ""
 	}
 	return http.Header(headers).Get("Content-Type")
+}
+
+func shouldFlushStreamingResponse(contentType string) bool {
+	return strings.EqualFold(strings.TrimSpace(contentType), "text/event-stream")
 }

@@ -299,7 +299,8 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(resp.Status)
 
 		flusher, canFlush := w.(http.Flusher)
-		if canFlush {
+		flushStreaming := canFlush && shouldFlushStreamingResponse(contentTypeFromHeaders(resp.Headers))
+		if flushStreaming {
 			flusher.Flush()
 		}
 
@@ -312,7 +313,7 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 				logEntry.ResponseBytes += int64(len(chunk))
 				responseCapture.Observe(chunk)
 				_, _ = w.Write(chunk)
-				if canFlush {
+				if flushStreaming {
 					flusher.Flush()
 				}
 			case err := <-req.ErrorCh:
