@@ -442,11 +442,7 @@ func (a *App) proxyWebSocket(ctx context.Context, request *activeRequest, frame 
 		a.enqueueResponseError(request.id, http.StatusBadGateway, err)
 		return
 	}
-	if backendURL.Scheme == "http" {
-		backendURL.Scheme = "ws"
-	} else if backendURL.Scheme == "https" {
-		backendURL.Scheme = "wss"
-	}
+	backendURL.Scheme = websocketSchemeForBackend(backendURL.Scheme)
 
 	httpHeader := make(http.Header)
 	for k, vals := range headers {
@@ -455,6 +451,7 @@ func (a *App) proxyWebSocket(ctx context.Context, request *activeRequest, frame 
 		}
 	}
 
+	log.Printf("Dialing backend websocket: %s", backendURL.String())
 	backendConn, resp, err := dialer.DialContext(ctx, backendURL.String(), httpHeader)
 	if err != nil {
 		// Backend rejected the WebSocket upgrade or other error
@@ -711,6 +708,19 @@ func convertFrameHeaders(headers map[string]*protocol.StringList) map[string][]s
 		result[key] = values.GetValues()
 	}
 	return result
+}
+
+func websocketSchemeForBackend(scheme string) string {
+	switch strings.ToLower(strings.TrimSpace(scheme)) {
+	case "https":
+		return "wss"
+	case "http", "":
+		return "ws"
+	case "ws", "wss":
+		return scheme
+	default:
+		return "ws"
+	}
 }
 
 func getenv(key string) string {

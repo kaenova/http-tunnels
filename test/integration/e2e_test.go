@@ -366,7 +366,17 @@ func (p *tunnelWSProxy) handleRequest(start *protocol.Frame, ch chan *protocol.F
 		}
 	}
 	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
-	backendConn, resp, err := dialer.Dial(p.backendURL+start.GetPath(), h)
+	backendURL := p.backendURL + start.GetPath()
+	backendURL = strings.Replace(backendURL, "http://", "ws://", 1)
+	backendURL = strings.Replace(backendURL, "https://", "wss://", 1)
+	// Remove hop-by-hop / websocket handshake headers that the dialer will add itself
+	h.Del("Upgrade")
+	h.Del("Connection")
+	h.Del("Sec-Websocket-Key")
+	h.Del("Sec-Websocket-Version")
+	h.Del("Sec-Websocket-Extensions")
+	h.Del("Sec-Websocket-Protocol")
+	backendConn, resp, err := dialer.Dial(backendURL, h)
 	if err != nil {
 		status := http.StatusBadGateway
 		msg := err.Error()
