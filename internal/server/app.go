@@ -26,6 +26,7 @@ type App struct {
 	assets        fs.FS
 	assetHandler  http.Handler
 	sessions      *TunnelSessionStore
+	wsBridges     *WSBridgeStore
 	server        *http.Server
 	reconcileCtx  context.Context
 	reconcileStop context.CancelFunc
@@ -45,6 +46,7 @@ func NewApp(config Config, assets fs.FS) (*App, error) {
 		pending:       NewPendingStore(time.Duration(config.DefaultRequestTimeout) * time.Millisecond),
 		assets:        assets,
 		sessions:      NewTunnelSessionStore(),
+		wsBridges:     NewWSBridgeStore(),
 		reconcileCtx:  reconcileCtx,
 		reconcileStop: reconcileStop,
 	}

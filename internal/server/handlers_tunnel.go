@@ -170,6 +170,14 @@ func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 				req.Fail(&requestError{status: int(frame.GetStatus()), msg: frame.GetError()})
 				a.pending.Remove(frame.GetRequestId())
 			}
+		case protocol.FrameType_WEBSOCKET_TEXT,
+			protocol.FrameType_WEBSOCKET_BINARY,
+			protocol.FrameType_WEBSOCKET_CLOSE,
+			protocol.FrameType_WEBSOCKET_PING,
+			protocol.FrameType_WEBSOCKET_PONG:
+			if bridge, ok := a.wsBridges.Get(frame.GetRequestId()); ok {
+				bridge.ForwardTunnelToUser(frame)
+			}
 		}
 	}
 
@@ -202,8 +210,6 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Too many concurrent requests", http.StatusServiceUnavailable)
 		return
 	}
-	session.IncrementActive()
-	defer session.DecrementActive()
 
 	startedAt := time.Now().UTC()
 	requestID := protocol.GenerateID(16)
@@ -250,9 +256,12 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
-		http.Error(w, "WebSocket upgrade not yet implemented", http.StatusNotImplemented)
-		return
+		// Allow websocket upgrade to flow through normal tunnel proxy.
+		// The backend (client) decides whether to accept or reject.
 	}
+
+	session.IncrementActive()
+	defer session.DecrementActive()
 
 	req := &PendingRequest{
 		ID:         requestID,
@@ -294,6 +303,41 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 	case resp := <-req.ResponseCh:
 		statusCode = resp.Status
 		responseHeaders = resp.Headers
+
+		if resp.Status == http.StatusSwitchingProtocols {
+			// WebSocket upgrade — hijack connection and bridge over tunnel
+			upgrader := websocket.Upgrader{
+				CheckOrigin: func(r *http.Request) bool { return true },
+			}
+			// Apply backend response headers to the 101 response
+			for k, v := range resp.Headers {
+				for _, val := range v {
+					w.Header().Add(k, val)
+				}
+			}
+			userConn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				responseErr = err
+				statusCode = http.StatusBadGateway
+				http.Error(w, err.Error(), statusCode)
+				return
+			}
+
+			// Remove from pending store; we no longer expect HTTP response frames
+			a.pending.Remove(requestID)
+
+			bridge := NewWSBridge(requestID, session, userConn)
+			a.wsBridges.Set(requestID, bridge)
+			defer a.wsBridges.Delete(requestID)
+
+			// Read from user WS and forward to tunnel
+			go bridge.forwardUserToTunnel()
+
+			// Block until bridge is closed from tunnel side or user disconnects
+			<-bridge.Done()
+			return
+		}
+
 		responseCapture = NewBodyCapture(contentTypeFromHeaders(resp.Headers))
 		protocol.ApplyHeaders(w.Header(), resp.Headers)
 		w.WriteHeader(resp.Status)

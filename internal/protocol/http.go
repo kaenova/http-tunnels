@@ -11,7 +11,6 @@ import (
 )
 
 var hopByHopHeaders = map[string]struct{}{
-	"Connection":          {},
 	"Proxy-Connection":    {},
 	"Keep-Alive":          {},
 	"Proxy-Authenticate":  {},
@@ -19,7 +18,6 @@ var hopByHopHeaders = map[string]struct{}{
 	"Te":                  {},
 	"Trailer":             {},
 	"Transfer-Encoding":   {},
-	"Upgrade":             {},
 }
 
 func GenerateID(size int) string {

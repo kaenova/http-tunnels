@@ -187,6 +187,21 @@ func TestFrameTypeEnumValues(t *testing.T) {
 	if FrameType_RESPONSE_START != 12 {
 		t.Errorf("RESPONSE_START enum value changed: got %d, want 12", FrameType_RESPONSE_START)
 	}
+	if FrameType_WEBSOCKET_TEXT != 20 {
+		t.Errorf("WEBSOCKET_TEXT enum value changed: got %d, want 20", FrameType_WEBSOCKET_TEXT)
+	}
+	if FrameType_WEBSOCKET_BINARY != 21 {
+		t.Errorf("WEBSOCKET_BINARY enum value changed: got %d, want 21", FrameType_WEBSOCKET_BINARY)
+	}
+	if FrameType_WEBSOCKET_CLOSE != 22 {
+		t.Errorf("WEBSOCKET_CLOSE enum value changed: got %d, want 22", FrameType_WEBSOCKET_CLOSE)
+	}
+	if FrameType_WEBSOCKET_PING != 23 {
+		t.Errorf("WEBSOCKET_PING enum value changed: got %d, want 23", FrameType_WEBSOCKET_PING)
+	}
+	if FrameType_WEBSOCKET_PONG != 24 {
+		t.Errorf("WEBSOCKET_PONG enum value changed: got %d, want 24", FrameType_WEBSOCKET_PONG)
+	}
 }
 
 func TestFrameEmptyChunk(t *testing.T) {

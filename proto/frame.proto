@@ -30,6 +30,10 @@ message Frame {
 
   // Tunnel config (sent on registration)
   TunnelConfig config = 15;
+
+  // WebSocket close code / reason
+  int32 ws_close_code = 16;
+  string ws_close_text = 17;
 }
 
 message StringList {
@@ -70,4 +74,11 @@ enum FrameType {
   RESPONSE_BODY = 13;
   RESPONSE_END = 14;
   RESPONSE_ERROR = 15;
+
+  // WebSocket proxy frames
+  WEBSOCKET_TEXT = 20;
+  WEBSOCKET_BINARY = 21;
+  WEBSOCKET_CLOSE = 22;
+  WEBSOCKET_PING = 23;
+  WEBSOCKET_PONG = 24;
 }

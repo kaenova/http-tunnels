@@ -9,17 +9,17 @@ import (
 
 func TestCloneHeaders(t *testing.T) {
 	headers := http.Header{
-		"Content-Type":   {"application/json"},
-		"X-Custom":       {"value1", "value2"},
-		"Connection":     {"keep-alive"},
+		"Content-Type":      {"application/json"},
+		"X-Custom":          {"value1", "value2"},
+		"Connection":        {"keep-alive"},
 		"Transfer-Encoding": {"chunked"},
 	}
 
 	cloned := CloneHeaders(headers)
 
-	// Hop-by-hop headers should be stripped
-	if _, ok := cloned["Connection"]; ok {
-		t.Error("Connection header should be stripped")
+	// Headers needed for websocket upgrade should be preserved; others still stripped.
+	if cloned["Connection"][0] != "keep-alive" {
+		t.Errorf("Connection should be preserved for upgrade flows: %v", cloned["Connection"])
 	}
 	if _, ok := cloned["Transfer-Encoding"]; ok {
 		t.Error("Transfer-Encoding header should be stripped")
@@ -54,8 +54,8 @@ func TestApplyHeaders(t *testing.T) {
 	if dst.Get("Content-Type") != "application/json" {
 		t.Errorf("Content-Type not applied: got %q", dst.Get("Content-Type"))
 	}
-	if dst.Get("Connection") != "" {
-		t.Error("Connection header should be stripped by ApplyHeaders")
+	if dst.Get("Connection") != "keep-alive" {
+		t.Errorf("Connection header should be preserved for upgrade flows: got %q", dst.Get("Connection"))
 	}
 }
 

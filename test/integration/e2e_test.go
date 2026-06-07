@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -215,6 +216,226 @@ func TestHTTPRequestThroughTunnel(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	t.Logf("Response: status=%d body=%s", resp.StatusCode, string(body))
+}
+
+func TestWebSocketThroughTunnel(t *testing.T) {
+	echoUpgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	h := NewHarnessWithBackend(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ws" {
+			http.NotFound(w, r)
+			return
+		}
+		conn, err := echoUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("backend upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+		for {
+			msgType, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if err := conn.WriteMessage(msgType, append([]byte("echo:"), data...)); err != nil {
+				return
+			}
+		}
+	}))
+
+	tunnel := h.CreateTunnel(t, "")
+
+	wsURL := "ws" + strings.TrimPrefix(h.TunnelAddr, "http") + "/tunnel?domain=" + url.QueryEscape(tunnel.Domain) + "&domain_key=" + url.QueryEscape(tunnel.DomainKey)
+	conn, _, err := h.WSDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("connect main WS: %v", err)
+	}
+	defer conn.Close()
+	ws := protocol.NewConnection(conn)
+	if err := ws.Send(&protocol.Frame{Type: protocol.FrameType_REGISTER, Domain: tunnel.Domain, DomainKey: tunnel.DomainKey}); err != nil {
+		t.Fatalf("send register: %v", err)
+	}
+	if frame, err := ws.ReadFrame(); err != nil || frame.GetType() != protocol.FrameType_REGISTERED {
+		t.Fatalf("read registered: frame=%v err=%v", frame, err)
+	}
+
+	proxy := newTunnelWSProxy(ws, h.Backend.URL)
+	go proxy.loop()
+	defer proxy.close()
+
+	time.Sleep(100 * time.Millisecond)
+
+	publicWSURL := "ws" + strings.TrimPrefix(h.TunnelAddr, "http") + "/ws"
+	publicDialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
+	header := http.Header{}
+	header.Set("Host", tunnel.Domain)
+	userConn, resp, err := publicDialer.Dial(publicWSURL, header)
+	if err != nil {
+		if resp != nil {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("dial tunneled ws failed: %v (status=%s body=%s)", err, resp.Status, string(body))
+		}
+		t.Fatalf("dial tunneled ws failed: %v", err)
+	}
+	defer userConn.Close()
+
+	if err := userConn.WriteMessage(websocket.TextMessage, []byte("hello")); err != nil {
+		t.Fatalf("write user ws: %v", err)
+	}
+	msgType, payload, err := userConn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read user ws: %v", err)
+	}
+	if msgType != websocket.TextMessage {
+		t.Fatalf("expected text message, got %d", msgType)
+	}
+	if string(payload) != "echo:hello" {
+		t.Fatalf("unexpected tunneled ws payload: %q", string(payload))
+	}
+}
+
+type tunnelWSProxy struct {
+	ws         *protocol.Connection
+	backendURL string
+	mu         sync.Mutex
+	requests   map[string]chan *protocol.Frame
+	closed     chan struct{}
+}
+
+func newTunnelWSProxy(ws *protocol.Connection, backendURL string) *tunnelWSProxy {
+	return &tunnelWSProxy{
+		ws:         ws,
+		backendURL: backendURL,
+		requests:   make(map[string]chan *protocol.Frame),
+		closed:     make(chan struct{}),
+	}
+}
+
+func (p *tunnelWSProxy) close() {
+	select {
+	case <-p.closed:
+		return
+	default:
+		close(p.closed)
+	}
+}
+
+func (p *tunnelWSProxy) loop() {
+	for {
+		frame, err := p.ws.ReadFrame()
+		if err != nil {
+			p.close()
+			return
+		}
+		switch frame.GetType() {
+		case protocol.FrameType_REQUEST_START:
+			ch := make(chan *protocol.Frame, 32)
+			p.mu.Lock()
+			p.requests[frame.GetRequestId()] = ch
+			p.mu.Unlock()
+			go p.handleRequest(frame, ch)
+		default:
+			if frame.GetRequestId() == "" {
+				continue
+			}
+			p.mu.Lock()
+			ch := p.requests[frame.GetRequestId()]
+			p.mu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- frame:
+				case <-p.closed:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (p *tunnelWSProxy) handleRequest(start *protocol.Frame, ch chan *protocol.Frame) {
+	defer func() {
+		p.mu.Lock()
+		delete(p.requests, start.GetRequestId())
+		close(ch)
+		p.mu.Unlock()
+	}()
+
+	h := make(http.Header)
+	for k, vals := range start.GetHeaders() {
+		for _, v := range vals.GetValues() {
+			h.Add(k, v)
+		}
+	}
+	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
+	backendConn, resp, err := dialer.Dial(p.backendURL+start.GetPath(), h)
+	if err != nil {
+		status := http.StatusBadGateway
+		msg := err.Error()
+		if resp != nil {
+			status = resp.StatusCode
+			msg = msg + " status=" + resp.Status
+		}
+		_ = p.ws.Send(&protocol.Frame{Type: protocol.FrameType_RESPONSE_ERROR, RequestId: start.GetRequestId(), Status: int32(status), Error: msg})
+		return
+	}
+	defer backendConn.Close()
+
+	respHeaders := make(map[string]*protocol.StringList)
+	if resp != nil {
+		for k, vals := range resp.Header {
+			respHeaders[k] = &protocol.StringList{Values: vals}
+		}
+	}
+	if err := p.ws.Send(&protocol.Frame{Type: protocol.FrameType_RESPONSE_START, RequestId: start.GetRequestId(), Status: int32(http.StatusSwitchingProtocols), ResponseHeaders: respHeaders}); err != nil {
+		return
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			msgType, data, err := backendConn.ReadMessage()
+			if err != nil {
+				_ = p.ws.Send(&protocol.Frame{Type: protocol.FrameType_WEBSOCKET_CLOSE, RequestId: start.GetRequestId(), WsCloseCode: int32(websocket.CloseNormalClosure)})
+				return
+			}
+			frameType := protocol.FrameType_WEBSOCKET_BINARY
+			if msgType == websocket.TextMessage {
+				frameType = protocol.FrameType_WEBSOCKET_TEXT
+			}
+			if err := p.ws.Send(&protocol.Frame{Type: frameType, RequestId: start.GetRequestId(), Chunk: data}); err != nil {
+				return
+			}
+		}
+	}()
+
+	for {
+		select {
+		case <-p.closed:
+			return
+		case frame, ok := <-ch:
+			if !ok {
+				return
+			}
+			switch frame.GetType() {
+			case protocol.FrameType_WEBSOCKET_TEXT:
+				if err := backendConn.WriteMessage(websocket.TextMessage, frame.GetChunk()); err != nil {
+					return
+				}
+			case protocol.FrameType_WEBSOCKET_BINARY:
+				if err := backendConn.WriteMessage(websocket.BinaryMessage, frame.GetChunk()); err != nil {
+					return
+				}
+			case protocol.FrameType_WEBSOCKET_CLOSE:
+				code := int(frame.GetWsCloseCode())
+				if code == 0 {
+					code = websocket.CloseNormalClosure
+				}
+				_ = backendConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, frame.GetWsCloseText()))
+				<-done
+				return
+			}
+		}
+	}
 }
 
 // Ensure imports
