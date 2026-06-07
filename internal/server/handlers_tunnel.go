@@ -103,7 +103,8 @@ func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 		_ = prev.Close()
 	}
 
-	_ = a.store.MarkTunnelActive(r.Context(), session.TunnelID, r.RemoteAddr, r.UserAgent())
+	clientVersion := frame.GetClientVersion()
+	_ = a.store.MarkTunnelActive(r.Context(), session.TunnelID, r.RemoteAddr, r.UserAgent(), clientVersion)
 
 	if err := ws.Send(&protocol.Frame{
 		Type:     protocol.FrameType_REGISTERED,

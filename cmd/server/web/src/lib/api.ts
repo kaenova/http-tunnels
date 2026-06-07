@@ -18,6 +18,7 @@ export type TunnelRecord = {
   requestCount: number
   remoteAddr?: string
   userAgent?: string
+  clientVersion?: string
 }
 
 export type RequestResponseLog = {
@@ -59,6 +60,9 @@ export type DashboardSummary = {
   registeredTunnels: number
   totalRequests: number
   dataTransferredBytes: number
+  totalRequestBytes: number
+  totalResponseBytes: number
+  serverVersion: string
 }
 
 export type DashboardResponse = {
@@ -66,6 +70,14 @@ export type DashboardResponse = {
   activeTunnels: TunnelRecord[]
   recentRequests: RequestResponseLog[]
   recentTunnelCreates: TunnelCreationLog[]
+  statusChart: StatusChartPoint[]
+  trafficChart: TrafficChartPoint[]
+}
+
+export type ChartRange = {
+  granularity: string
+  startDate: string
+  endDate: string
 }
 
 export type TunnelListResponse = {
@@ -181,7 +193,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ password }),
     }),
-  dashboard: () => request<DashboardResponse>("/api/admin/dashboard"),
+  dashboard: (range?: ChartRange) => {
+    const qs = buildQueryString({
+      granularity: range?.granularity,
+      start_date: range?.startDate,
+      end_date: range?.endDate,
+    })
+    return request<DashboardResponse>(`/api/admin/dashboard${qs}`)
+  },
   listRequestActivity: (
     page: number,
     pageSize: number,
@@ -203,10 +222,16 @@ export const api = {
     request<TunnelListResponse>(
       `/api/admin/tunnels${buildQueryString({ page, pageSize })}`
     ),
-  tunnelDetail: (tunnelId: string, page: number, pageSize: number) =>
-    request<TunnelDetailResponse>(
-      `/api/admin/tunnels/${tunnelId}${buildQueryString({ page, pageSize })}`
-    ),
+  tunnelDetail: (tunnelId: string, page: number, pageSize: number, range?: ChartRange) => {
+    const qs = buildQueryString({
+      page,
+      pageSize,
+      granularity: range?.granularity,
+      start_date: range?.startDate,
+      end_date: range?.endDate,
+    })
+    return request<TunnelDetailResponse>(`/api/admin/tunnels/${tunnelId}${qs}`)
+  },
   deleteTunnel: (tunnelId: string) =>
     request<{ ok: boolean }>(`/api/admin/tunnels/${tunnelId}`, {
       method: "DELETE",

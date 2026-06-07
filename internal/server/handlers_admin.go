@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type loginRequest struct {
@@ -152,7 +153,8 @@ func (a *App) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := a.store.GetDashboard(r.Context())
+	chartRange := parseChartRange(r)
+	response, err := a.store.GetDashboard(r.Context(), chartRange)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
@@ -160,7 +162,33 @@ func (a *App) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Summary.ActiveTraffic = int64(a.sessions.ActiveRequestCount())
+	response.Summary.ServerVersion = a.Version
 	writeJSON(w, http.StatusOK, response)
+}
+
+func parseChartRange(r *http.Request) ChartRange {
+	granularity := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("granularity")))
+	if granularity == "" {
+		granularity = "day"
+	}
+	now := time.Now().UTC()
+	startDate := now.AddDate(0, 0, -6).Truncate(24 * time.Hour)
+	endDate := now.Truncate(24 * time.Hour)
+	if s := strings.TrimSpace(r.URL.Query().Get("start_date")); s != "" {
+		if parsed, err := time.Parse("2006-01-02", s); err == nil {
+			startDate = parsed.UTC()
+		}
+	}
+	if e := strings.TrimSpace(r.URL.Query().Get("end_date")); e != "" {
+		if parsed, err := time.Parse("2006-01-02", e); err == nil {
+			endDate = parsed.UTC().Add(24*time.Hour - time.Second)
+		}
+	}
+	return ChartRange{
+		Granularity: granularity,
+		StartDate:   startDate,
+		EndDate:     endDate,
+	}
 }
 
 func (a *App) handleRequestActivityListAPI(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +260,8 @@ func (a *App) handleTunnelDetailAPI(w http.ResponseWriter, r *http.Request, suff
 	switch r.Method {
 	case http.MethodGet:
 		page, pageSize := parsePaginationParams(r)
-		response, err := a.store.GetTunnelDetail(r.Context(), tunnelID, page, pageSize)
+		chartRange := parseChartRange(r)
+		response, err := a.store.GetTunnelDetail(r.Context(), tunnelID, page, pageSize, chartRange)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				http.NotFound(w, r)

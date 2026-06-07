@@ -231,6 +231,7 @@ func (s *Store) migrate() error {
 			request_count INTEGER NOT NULL DEFAULT 0,
 			remote_addr TEXT,
 			user_agent TEXT,
+			client_version TEXT,
 			deleted_at TIMESTAMP
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_tunnels_domain_state ON tunnels(domain, state, deleted_at, created_at DESC);`,
@@ -278,6 +279,11 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("running migration failed: %w", err)
 		}
 	}
+	// Backward-compatible schema additions
+	_ = s.execBusyRetry(func() error {
+		_, err := s.db.Exec(`ALTER TABLE tunnels ADD COLUMN client_version TEXT;`)
+		return err
+	})
 	return nil
 }
 
@@ -347,7 +353,7 @@ func (s *Store) LogTunnelCreation(ctx context.Context, tunnelID, domain, request
 func (s *Store) FindTunnelForConnection(ctx context.Context, domain, domainKeyHash string) (TunnelRecord, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, domain, requested_subdomain, state, created_at, connected_at, disconnected_at, last_activity_at,
-		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, deleted_at
+		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, client_version, deleted_at
 		FROM tunnels
 		WHERE domain = ? AND domain_key_hash = ? AND deleted_at IS NULL AND state != 'deleted'
 		ORDER BY created_at DESC
@@ -356,13 +362,13 @@ func (s *Store) FindTunnelForConnection(ctx context.Context, domain, domainKeyHa
 	return scanTunnelRecord(row)
 }
 
-func (s *Store) MarkTunnelActive(ctx context.Context, tunnelID, remoteAddr, userAgent string) error {
+func (s *Store) MarkTunnelActive(ctx context.Context, tunnelID, remoteAddr, userAgent, clientVersion string) error {
 	now := time.Now().UTC()
 	err := s.execContextBusyRetry(ctx, `
 		UPDATE tunnels
-		SET state = 'active', connected_at = COALESCE(connected_at, ?), disconnected_at = NULL, last_activity_at = ?, remote_addr = ?, user_agent = ?
+		SET state = 'active', connected_at = COALESCE(connected_at, ?), disconnected_at = NULL, last_activity_at = ?, remote_addr = ?, user_agent = ?, client_version = ?
 		WHERE id = ?
-	`, now, now, nullableString(remoteAddr), nullableString(userAgent), tunnelID)
+	`, now, now, nullableString(remoteAddr), nullableString(userAgent), nullableString(clientVersion), tunnelID)
 	if err != nil {
 		return fmt.Errorf("marking tunnel active failed: %w", err)
 	}
@@ -407,7 +413,7 @@ func (s *Store) DeleteTunnel(ctx context.Context, tunnelID string) error {
 func (s *Store) GetTunnelByID(ctx context.Context, tunnelID string) (TunnelRecord, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, domain, requested_subdomain, state, created_at, connected_at, disconnected_at, last_activity_at,
-		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, deleted_at
+		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, client_version, deleted_at
 		FROM tunnels
 		WHERE id = ? AND deleted_at IS NULL
 	`, tunnelID)
@@ -440,7 +446,7 @@ func (s *Store) ListActiveTunnels(ctx context.Context, page, pageSize int) (Tunn
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, domain, requested_subdomain, state, created_at, connected_at, disconnected_at, last_activity_at,
-		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, deleted_at
+		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, client_version, deleted_at
 		FROM tunnels
 		WHERE deleted_at IS NULL AND state = 'active'
 		ORDER BY created_at DESC
@@ -559,7 +565,7 @@ func (s *Store) GetRequestLogByID(ctx context.Context, requestLogID string) (Req
 	return scanRequestLog(row)
 }
 
-func (s *Store) GetDashboard(ctx context.Context) (DashboardResponse, error) {
+func (s *Store) GetDashboard(ctx context.Context, r ChartRange) (DashboardResponse, error) {
 	summary, err := s.dashboardSummary(ctx)
 	if err != nil {
 		return DashboardResponse{}, err
@@ -576,25 +582,35 @@ func (s *Store) GetDashboard(ctx context.Context) (DashboardResponse, error) {
 	if err != nil {
 		return DashboardResponse{}, err
 	}
+	statusChart, err := s.statusChart(ctx, "", r)
+	if err != nil {
+		return DashboardResponse{}, err
+	}
+	trafficChart, err := s.trafficChart(ctx, "", r)
+	if err != nil {
+		return DashboardResponse{}, err
+	}
 
 	return DashboardResponse{
 		Summary:             summary,
 		ActiveTunnels:       activeTunnels,
 		RecentRequests:      recentRequests,
 		RecentTunnelCreates: recentCreates,
+		StatusChart:         statusChart,
+		TrafficChart:        trafficChart,
 	}, nil
 }
 
-func (s *Store) GetTunnelDetail(ctx context.Context, tunnelID string, page, pageSize int) (TunnelDetailResponse, error) {
+func (s *Store) GetTunnelDetail(ctx context.Context, tunnelID string, page, pageSize int, r ChartRange) (TunnelDetailResponse, error) {
 	tunnel, err := s.GetTunnelByID(ctx, tunnelID)
 	if err != nil {
 		return TunnelDetailResponse{}, err
 	}
-	statusChart, err := s.statusChart(ctx, tunnelID, 7)
+	statusChart, err := s.statusChart(ctx, tunnelID, r)
 	if err != nil {
 		return TunnelDetailResponse{}, err
 	}
-	trafficChart, err := s.trafficChart(ctx, tunnelID, 7)
+	trafficChart, err := s.trafficChart(ctx, tunnelID, r)
 	if err != nil {
 		return TunnelDetailResponse{}, err
 	}
@@ -623,9 +639,11 @@ func (s *Store) dashboardSummary(ctx context.Context) (DashboardSummary, error) 
 			COALESCE(SUM(CASE WHEN state = 'active' AND deleted_at IS NULL THEN 1 ELSE 0 END), 0) AS active_tunnels,
 			COALESCE(SUM(CASE WHEN state IN ('pending', 'active') AND deleted_at IS NULL THEN 1 ELSE 0 END), 0) AS registered_tunnels,
 			COALESCE((SELECT COUNT(1) FROM request_response_logs), 0) AS total_requests,
-			COALESCE((SELECT SUM(request_bytes + response_bytes) FROM request_response_logs), 0) AS transferred_bytes
+			COALESCE((SELECT SUM(request_bytes + response_bytes) FROM request_response_logs), 0) AS transferred_bytes,
+			COALESCE((SELECT SUM(request_bytes) FROM request_response_logs), 0) AS request_bytes,
+			COALESCE((SELECT SUM(response_bytes) FROM request_response_logs), 0) AS response_bytes
 		FROM tunnels
-	`).Scan(&summary.ActiveTunnels, &summary.RegisteredTunnels, &summary.TotalRequests, &summary.DataTransferredBytes)
+	`).Scan(&summary.ActiveTunnels, &summary.RegisteredTunnels, &summary.TotalRequests, &summary.DataTransferredBytes, &summary.TotalRequestBytes, &summary.TotalResponseBytes)
 	if err != nil {
 		return DashboardSummary{}, fmt.Errorf("loading dashboard summary failed: %w", err)
 	}
@@ -635,7 +653,7 @@ func (s *Store) dashboardSummary(ctx context.Context) (DashboardSummary, error) 
 func (s *Store) listLatestActiveTunnels(ctx context.Context, limit int) ([]TunnelRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, domain, requested_subdomain, state, created_at, connected_at, disconnected_at, last_activity_at,
-		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, deleted_at
+		       total_request_bytes, total_response_bytes, request_count, remote_addr, user_agent, client_version, deleted_at
 		FROM tunnels
 		WHERE deleted_at IS NULL AND state = 'active'
 		ORDER BY created_at DESC
@@ -744,24 +762,45 @@ func (s *Store) listRecentTunnelCreations(ctx context.Context, limit int, tunnel
 	return items, nil
 }
 
-func (s *Store) statusChart(ctx context.Context, tunnelID string, days int) ([]StatusChartPoint, error) {
+func (s *Store) statusChart(ctx context.Context, tunnelID string, r ChartRange) ([]StatusChartPoint, error) {
+	var bucketExpr string
+	var bucketFormat string
+	switch r.Granularity {
+	case "hour":
+		bucketExpr = `substr(CAST(started_at AS TEXT), 1, 13)`
+		bucketFormat = "2006-01-02T15"
+	case "week":
+		bucketExpr = `strftime('%Y-W%W', started_at)`
+		bucketFormat = "2006-W02"
+	default: // day
+		bucketExpr = `substr(CAST(started_at AS TEXT), 1, 10)`
+		bucketFormat = "2006-01-02"
+	}
+
+	where := "WHERE started_at >= ? AND started_at <= ?"
+	args := []any{r.StartDate.UTC(), r.EndDate.UTC()}
+	if tunnelID != "" {
+		where += " AND tunnel_id = ?"
+		args = append(args, tunnelID)
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT substr(CAST(started_at AS TEXT), 1, 10) AS bucket,
+		SELECT `+bucketExpr+` AS bucket,
 		       SUM(CASE WHEN status_code BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS two_xx,
 		       SUM(CASE WHEN status_code BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS three_xx,
 		       SUM(CASE WHEN status_code BETWEEN 400 AND 499 THEN 1 ELSE 0 END) AS four_xx,
 		       SUM(CASE WHEN status_code BETWEEN 500 AND 599 THEN 1 ELSE 0 END) AS five_xx
 		FROM request_response_logs
-		WHERE tunnel_id = ? AND started_at >= ?
+		`+where+`
 		GROUP BY bucket
 		ORDER BY bucket ASC
-	`, tunnelID, time.Now().UTC().AddDate(0, 0, -(days-1)))
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("loading status chart failed: %w", err)
 	}
 	defer rows.Close()
 
-	points := make([]StatusChartPoint, 0, days)
+	points := make([]StatusChartPoint, 0)
 	for rows.Next() {
 		var point StatusChartPoint
 		var bucket sql.NullString
@@ -777,25 +816,46 @@ func (s *Store) statusChart(ctx context.Context, tunnelID string, days int) ([]S
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating status chart failed: %w", err)
 	}
-	return ensureStatusChartBuckets(points, days), nil
+	return ensureStatusChartBuckets(points, r, bucketFormat), nil
 }
 
-func (s *Store) trafficChart(ctx context.Context, tunnelID string, days int) ([]TrafficChartPoint, error) {
+func (s *Store) trafficChart(ctx context.Context, tunnelID string, r ChartRange) ([]TrafficChartPoint, error) {
+	var bucketExpr string
+	var bucketFormat string
+	switch r.Granularity {
+	case "hour":
+		bucketExpr = `substr(CAST(started_at AS TEXT), 1, 13)`
+		bucketFormat = "2006-01-02T15"
+	case "week":
+		bucketExpr = `strftime('%Y-W%W', started_at)`
+		bucketFormat = "2006-W02"
+	default: // day
+		bucketExpr = `substr(CAST(started_at AS TEXT), 1, 10)`
+		bucketFormat = "2006-01-02"
+	}
+
+	where := "WHERE started_at >= ? AND started_at <= ?"
+	args := []any{r.StartDate.UTC(), r.EndDate.UTC()}
+	if tunnelID != "" {
+		where += " AND tunnel_id = ?"
+		args = append(args, tunnelID)
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT substr(CAST(started_at AS TEXT), 1, 10) AS bucket,
+		SELECT `+bucketExpr+` AS bucket,
 		       COALESCE(SUM(request_bytes), 0) AS inbound_bytes,
 		       COALESCE(SUM(response_bytes), 0) AS outbound_bytes
 		FROM request_response_logs
-		WHERE tunnel_id = ? AND started_at >= ?
+		`+where+`
 		GROUP BY bucket
 		ORDER BY bucket ASC
-	`, tunnelID, time.Now().UTC().AddDate(0, 0, -(days-1)))
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("loading traffic chart failed: %w", err)
 	}
 	defer rows.Close()
 
-	points := make([]TrafficChartPoint, 0, days)
+	points := make([]TrafficChartPoint, 0)
 	for rows.Next() {
 		var point TrafficChartPoint
 		var bucket sql.NullString
@@ -811,7 +871,7 @@ func (s *Store) trafficChart(ctx context.Context, tunnelID string, days int) ([]
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating traffic chart failed: %w", err)
 	}
-	return ensureTrafficChartBuckets(points, days), nil
+	return ensureTrafficChartBuckets(points, r, bucketFormat), nil
 }
 
 func buildRequestLogFilterClause(filters RequestLogFilters) (string, []any) {
@@ -855,7 +915,7 @@ func buildRequestLogFilterClause(filters RequestLogFilters) (string, []any) {
 func scanTunnelRecord(scanner interface{ Scan(dest ...any) error }) (TunnelRecord, error) {
 	var record TunnelRecord
 	var connectedAt, disconnectedAt, lastActivityAt, deletedAt sql.NullTime
-	var requestedSubdomain, remoteAddr, userAgent sql.NullString
+	var requestedSubdomain, remoteAddr, userAgent, clientVersion sql.NullString
 	if err := scanner.Scan(
 		&record.ID,
 		&record.Domain,
@@ -870,6 +930,7 @@ func scanTunnelRecord(scanner interface{ Scan(dest ...any) error }) (TunnelRecor
 		&record.RequestCount,
 		&remoteAddr,
 		&userAgent,
+		&clientVersion,
 		&deletedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -894,6 +955,9 @@ func scanTunnelRecord(scanner interface{ Scan(dest ...any) error }) (TunnelRecor
 	}
 	if userAgent.Valid {
 		record.UserAgent = userAgent.String
+	}
+	if clientVersion.Valid {
+		record.ClientVersion = clientVersion.String
 	}
 	if deletedAt.Valid {
 		record.DeletedAt = &deletedAt.Time
@@ -1034,14 +1098,26 @@ func nullableTimeValue(value *time.Time) any {
 	return value.UTC()
 }
 
-func ensureStatusChartBuckets(points []StatusChartPoint, days int) []StatusChartPoint {
+func ensureStatusChartBuckets(points []StatusChartPoint, r ChartRange, bucketFormat string) []StatusChartPoint {
 	lookup := make(map[string]StatusChartPoint, len(points))
 	for _, point := range points {
 		lookup[point.Bucket] = point
 	}
-	filled := make([]StatusChartPoint, 0, days)
-	for i := days - 1; i >= 0; i-- {
-		bucket := time.Now().UTC().AddDate(0, 0, -i).Format("2006-01-02")
+	start := r.StartDate.UTC().Truncate(time.Hour)
+	end := r.EndDate.UTC().Truncate(time.Hour)
+	if r.Granularity == "day" {
+		start = start.Truncate(24 * time.Hour)
+		end = end.Truncate(24 * time.Hour)
+	}
+	step := time.Hour
+	if r.Granularity == "day" {
+		step = 24 * time.Hour
+	} else if r.Granularity == "week" {
+		step = 7 * 24 * time.Hour
+	}
+	var filled []StatusChartPoint
+	for t := start; !t.After(end); t = t.Add(step) {
+		bucket := t.Format(bucketFormat)
 		point, ok := lookup[bucket]
 		if !ok {
 			point = StatusChartPoint{Bucket: bucket}
@@ -1051,14 +1127,26 @@ func ensureStatusChartBuckets(points []StatusChartPoint, days int) []StatusChart
 	return filled
 }
 
-func ensureTrafficChartBuckets(points []TrafficChartPoint, days int) []TrafficChartPoint {
+func ensureTrafficChartBuckets(points []TrafficChartPoint, r ChartRange, bucketFormat string) []TrafficChartPoint {
 	lookup := make(map[string]TrafficChartPoint, len(points))
 	for _, point := range points {
 		lookup[point.Bucket] = point
 	}
-	filled := make([]TrafficChartPoint, 0, days)
-	for i := days - 1; i >= 0; i-- {
-		bucket := time.Now().UTC().AddDate(0, 0, -i).Format("2006-01-02")
+	start := r.StartDate.UTC().Truncate(time.Hour)
+	end := r.EndDate.UTC().Truncate(time.Hour)
+	if r.Granularity == "day" {
+		start = start.Truncate(24 * time.Hour)
+		end = end.Truncate(24 * time.Hour)
+	}
+	step := time.Hour
+	if r.Granularity == "day" {
+		step = 24 * time.Hour
+	} else if r.Granularity == "week" {
+		step = 7 * 24 * time.Hour
+	}
+	var filled []TrafficChartPoint
+	for t := start; !t.After(end); t = t.Add(step) {
+		bucket := t.Format(bucketFormat)
 		point, ok := lookup[bucket]
 		if !ok {
 			point = TrafficChartPoint{Bucket: bucket}

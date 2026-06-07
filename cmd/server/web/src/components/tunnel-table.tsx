@@ -73,6 +73,7 @@ export function TunnelTable({
               <TableHeader>
                 <TableRow>
                   <TableHead>Subdomain</TableHead>
+                  <TableHead>Client version</TableHead>
                   <TableHead>Requests recorded</TableHead>
                   <TableHead>Data transferred</TableHead>
                   <TableHead>Livetime</TableHead>
@@ -90,6 +91,11 @@ export function TunnelTable({
                       >
                         {tunnel.domain}
                       </Link>
+                    </TableCell>
+                    <TableCell>
+                      <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium">
+                        {tunnel.clientVersion || "unknown"}
+                      </span>
                     </TableCell>
                     <TableCell>{formatCount(tunnel.requestCount)}</TableCell>
                     <TableCell>

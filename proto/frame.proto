@@ -34,6 +34,9 @@ message Frame {
   // WebSocket close code / reason
   int32 ws_close_code = 16;
   string ws_close_text = 17;
+
+  // Client version reported during registration
+  string client_version = 18;
 }
 
 message StringList {

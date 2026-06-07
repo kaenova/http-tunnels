@@ -43,7 +43,7 @@ func TestReconcileActiveTunnelStatesMarksMissingSessionsDisconnected(t *testing.
 	if err != nil {
 		t.Fatalf("create tunnel: %v", err)
 	}
-	if err := store.MarkTunnelActive(ctx, record.ID, "127.0.0.1", "test"); err != nil {
+	if err := store.MarkTunnelActive(ctx, record.ID, "127.0.0.1", "test", "test-version"); err != nil {
 		t.Fatalf("mark active: %v", err)
 	}
 

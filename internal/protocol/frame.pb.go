@@ -142,8 +142,10 @@ type Frame struct {
 	// Tunnel config (sent on registration)
 	Config *TunnelConfig `protobuf:"bytes,15,opt,name=config,proto3" json:"config,omitempty"`
 	// WebSocket close code / reason
-	WsCloseCode   int32  `protobuf:"varint,16,opt,name=ws_close_code,json=wsCloseCode,proto3" json:"ws_close_code,omitempty"`
-	WsCloseText   string `protobuf:"bytes,17,opt,name=ws_close_text,json=wsCloseText,proto3" json:"ws_close_text,omitempty"`
+	WsCloseCode int32  `protobuf:"varint,16,opt,name=ws_close_code,json=wsCloseCode,proto3" json:"ws_close_code,omitempty"`
+	WsCloseText string `protobuf:"bytes,17,opt,name=ws_close_text,json=wsCloseText,proto3" json:"ws_close_text,omitempty"`
+	// Client version reported during registration
+	ClientVersion string `protobuf:"bytes,18,opt,name=client_version,json=clientVersion,proto3" json:"client_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -293,6 +295,13 @@ func (x *Frame) GetWsCloseCode() int32 {
 func (x *Frame) GetWsCloseText() string {
 	if x != nil {
 		return x.WsCloseText
+	}
+	return ""
+}
+
+func (x *Frame) GetClientVersion() string {
+	if x != nil {
+		return x.ClientVersion
 	}
 	return ""
 }
@@ -497,7 +506,7 @@ var File_proto_frame_proto protoreflect.FileDescriptor
 
 const file_proto_frame_proto_rawDesc = "" +
 	"\n" +
-	"\x11proto/frame.proto\x12\bprotocol\"\x8e\x06\n" +
+	"\x11proto/frame.proto\x12\bprotocol\"\xb5\x06\n" +
 	"\x05Frame\x12'\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x13.protocol.FrameTypeR\x04type\x12\x1d\n" +
 	"\n" +
@@ -518,7 +527,8 @@ const file_proto_frame_proto_rawDesc = "" +
 	"\x0eserver_message\x18\x0e \x01(\tR\rserverMessage\x12.\n" +
 	"\x06config\x18\x0f \x01(\v2\x16.protocol.TunnelConfigR\x06config\x12\"\n" +
 	"\rws_close_code\x18\x10 \x01(\x05R\vwsCloseCode\x12\"\n" +
-	"\rws_close_text\x18\x11 \x01(\tR\vwsCloseText\x1aP\n" +
+	"\rws_close_text\x18\x11 \x01(\tR\vwsCloseText\x12%\n" +
+	"\x0eclient_version\x18\x12 \x01(\tR\rclientVersion\x1aP\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12*\n" +
 	"\x05value\x18\x02 \x01(\v2\x14.protocol.StringListR\x05value:\x028\x01\x1aX\n" +

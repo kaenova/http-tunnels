@@ -195,9 +195,10 @@ func (a *App) connectAndRegister(ctx context.Context, registration *createTunnel
 	log.Printf("Tunnel websocket connected: server=%s domain=%s", a.serverURL.Host, registration.Domain)
 	ws := protocol.NewConnection(conn)
 	if err := ws.Send(&protocol.Frame{
-		Type:      protocol.FrameType_REGISTER,
-		Domain:    registration.Domain,
-		DomainKey: registration.DomainKey,
+		Type:           protocol.FrameType_REGISTER,
+		Domain:         registration.Domain,
+		DomainKey:      registration.DomainKey,
+		ClientVersion:  Version,
 	}); err != nil {
 		_ = ws.Close()
 		return fmt.Errorf("register failed: %w", err)

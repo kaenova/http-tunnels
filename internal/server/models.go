@@ -16,6 +16,7 @@ type TunnelRecord struct {
 	RequestCount       int64      `json:"requestCount"`
 	RemoteAddr         string     `json:"remoteAddr,omitempty"`
 	UserAgent          string     `json:"userAgent,omitempty"`
+	ClientVersion      string     `json:"clientVersion,omitempty"`
 	DeletedAt          *time.Time `json:"deletedAt,omitempty"`
 }
 
@@ -61,11 +62,14 @@ type TunnelCreationLog struct {
 }
 
 type DashboardSummary struct {
-	ActiveTunnels        int64 `json:"activeTunnels"`
-	ActiveTraffic        int64 `json:"activeTraffic"`
-	RegisteredTunnels    int64 `json:"registeredTunnels"`
-	TotalRequests        int64 `json:"totalRequests"`
-	DataTransferredBytes int64 `json:"dataTransferredBytes"`
+	ActiveTunnels        int64  `json:"activeTunnels"`
+	ActiveTraffic        int64  `json:"activeTraffic"`
+	RegisteredTunnels    int64  `json:"registeredTunnels"`
+	TotalRequests        int64  `json:"totalRequests"`
+	DataTransferredBytes int64  `json:"dataTransferredBytes"`
+	TotalRequestBytes    int64  `json:"totalRequestBytes"`
+	TotalResponseBytes   int64  `json:"totalResponseBytes"`
+	ServerVersion        string `json:"serverVersion"`
 }
 
 type TunnelListResponse struct {
@@ -118,4 +122,12 @@ type DashboardResponse struct {
 	ActiveTunnels       []TunnelRecord       `json:"activeTunnels"`
 	RecentRequests      []RequestResponseLog `json:"recentRequests"`
 	RecentTunnelCreates []TunnelCreationLog  `json:"recentTunnelCreates"`
+	StatusChart         []StatusChartPoint   `json:"statusChart"`
+	TrafficChart        []TrafficChartPoint  `json:"trafficChart"`
+}
+
+type ChartRange struct {
+	Granularity string
+	StartDate   time.Time
+	EndDate     time.Time
 }

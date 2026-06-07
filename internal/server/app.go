@@ -30,6 +30,7 @@ type App struct {
 	server        *http.Server
 	reconcileCtx  context.Context
 	reconcileStop context.CancelFunc
+	Version       string
 }
 
 // NewApp creates a new tunnel server application

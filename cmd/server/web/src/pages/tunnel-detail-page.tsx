@@ -3,8 +3,9 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
+import { format, subDays } from "date-fns"
 
-import { api, ApiError } from "@/lib/api"
+import { api, ApiError, type ChartRange } from "@/lib/api"
 import { formatBytes, formatDateTime, formatDurationFrom } from "@/lib/format"
 import { DeleteTunnelDialog } from "@/components/delete-tunnel-dialog"
 import { PageHeader } from "@/components/page-header"
@@ -14,6 +15,7 @@ import { RequestLogList } from "@/components/request-log-list"
 import { TunnelStateBadge } from "@/components/status-badge"
 import { StatusChartCard } from "@/components/charts/status-chart-card"
 import { TrafficChartCard } from "@/components/charts/traffic-chart-card"
+import { ChartRangePicker } from "@/components/chart-range-picker"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -23,6 +25,12 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 
+const defaultRange: ChartRange = {
+  granularity: "day",
+  startDate: format(subDays(new Date(), 6), "yyyy-MM-dd"),
+  endDate: format(new Date(), "yyyy-MM-dd"),
+}
+
 const recentLogLimit = 5
 
 export function TunnelDetailPage() {
@@ -31,10 +39,11 @@ export function TunnelDetailPage() {
   const params = useParams<{ tunnelId: string }>()
   const tunnelId = params.tunnelId
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [chartRange, setChartRange] = useState<ChartRange>(defaultRange)
 
   const detailQuery = useQuery({
-    queryKey: ["tunnel-detail", tunnelId, recentLogLimit],
-    queryFn: () => api.tunnelDetail(tunnelId ?? "", 1, recentLogLimit),
+    queryKey: ["tunnel-detail", tunnelId, recentLogLimit, chartRange],
+    queryFn: () => api.tunnelDetail(tunnelId ?? "", 1, recentLogLimit, chartRange),
     enabled: !!tunnelId,
     refetchInterval: 5000,
   })
@@ -124,13 +133,29 @@ export function TunnelDetailPage() {
                 label="Connected since"
                 value={formatDateTime(tunnel.connectedAt)}
               />
+              <DetailItem
+                label="Client version"
+                value={tunnel.clientVersion || "unknown"}
+              />
+              <DetailItem
+                label="Remote address"
+                value={tunnel.remoteAddr || "unknown"}
+              />
+              <DetailItem
+                label="User agent"
+                value={tunnel.userAgent || "unknown"}
+              />
             </div>
           </CardContent>
         </Card>
 
-        <div className="grid gap-6 xl:grid-cols-2">
-          <StatusChartCard data={detailQuery.data.statusChart} />
-          <TrafficChartCard data={detailQuery.data.trafficChart} />
+        <div className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold">Traffic analytics</h2>
+          <ChartRangePicker value={chartRange} onChange={setChartRange} />
+          <div className="grid gap-6 xl:grid-cols-2">
+            <StatusChartCard data={detailQuery.data.statusChart} />
+            <TrafficChartCard data={detailQuery.data.trafficChart} />
+          </div>
         </div>
 
         <RequestLogList
