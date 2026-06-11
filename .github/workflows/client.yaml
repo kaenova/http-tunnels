@@ -24,22 +24,22 @@ jobs:
         run: mkdir -p dist
 
       - name: Build Darwin AMD64
-        run: GOOS=darwin GOARCH=amd64 go build -o dist/http-tunnels-darwin-amd64 .
+        run: GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/http-tunnels-darwin-amd64 .
 
       - name: Build Darwin ARM64
-        run: GOOS=darwin GOARCH=arm64 go build -o dist/http-tunnels-darwin-arm64 .
+        run: GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/http-tunnels-darwin-arm64 .
 
       - name: Build Linux AMD64
-        run: GOOS=linux GOARCH=amd64 go build -o dist/http-tunnels-linux-amd64 .
+        run: GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/http-tunnels-linux-amd64 .
 
       - name: Build Linux ARM64
-        run: GOOS=linux GOARCH=arm64 go build -o dist/http-tunnels-linux-arm64 .
+        run: GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/http-tunnels-linux-arm64 .
 
       - name: Build Windows AMD64
-        run: GOOS=windows GOARCH=amd64 go build -o dist/http-tunnels-windows-amd64.exe .
+        run: GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/http-tunnels-windows-amd64.exe .
 
       - name: Build Windows ARM64
-        run: GOOS=windows GOARCH=arm64 go build -o dist/http-tunnels-windows-arm64.exe .
+        run: GOOS=windows GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/http-tunnels-windows-arm64.exe .
 
       - name: Compress binaries
         run: |

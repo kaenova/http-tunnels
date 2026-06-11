@@ -33,7 +33,7 @@ RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
 
 # Build server binary only (client is at root http_tunnels.go)
 RUN go build -o http-tunnels-server -ldflags "-s -w -X main.Version=${VERSION}" ./cmd/server && \
-    go build -o http-tunnels -ldflags "-s -w -X main.Version=${VERSION}" .
+    go build -o http-tunnels -ldflags "-s -w -X main.version=${VERSION}" .
 
 # Stage 3: Create a lightweight runtime image
 FROM alpine:latest
