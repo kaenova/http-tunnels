@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -214,7 +215,11 @@ func (a *App) flushBufferedWebSocketFrames(requestID string, bridge *WSBridge) {
 	}
 }
 func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
-	host := protocol.NormalizeHost(r.Host)
+	host := normalizeRequestHost(r.Host)
+	// Strip port if present for tunnel lookup
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
 
 	session, ok := a.sessions.Get(host)
 	if !ok {

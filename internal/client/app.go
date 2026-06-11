@@ -447,6 +447,11 @@ func (a *App) proxyWebSocket(ctx context.Context, request *activeRequest, frame 
 
 	httpHeader := make(http.Header)
 	for k, vals := range headers {
+		// Skip websocket-specific headers that gorilla/websocket adds automatically
+		lowerK := strings.ToLower(k)
+		if lowerK == "upgrade" || lowerK == "connection" || strings.HasPrefix(lowerK, "sec-websocket-") {
+			continue
+		}
 		for _, v := range vals {
 			httpHeader.Add(k, v)
 		}
