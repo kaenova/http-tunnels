@@ -178,7 +178,9 @@ func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 			protocol.FrameType_WEBSOCKET_PONG:
 			if bridge, ok := a.wsBridges.Get(frame.GetRequestId()); ok {
 				bridge.ForwardTunnelToUser(frame)
+				continue
 			}
+			a.bufferWebSocketFrame(frame)
 		}
 	}
 
@@ -189,6 +191,28 @@ func (a *App) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Tunnel session cleaned up: domain=%s tunnel_id=%s remote=%s", domain, session.TunnelID, r.RemoteAddr)
 }
 
+
+func (a *App) bufferWebSocketFrame(frame *protocol.Frame) {
+	if a == nil || frame == nil || frame.GetRequestId() == "" {
+		return
+	}
+	a.wsBufferMu.Lock()
+	a.wsFrameBuffer[frame.GetRequestId()] = append(a.wsFrameBuffer[frame.GetRequestId()], frame)
+	a.wsBufferMu.Unlock()
+}
+
+func (a *App) flushBufferedWebSocketFrames(requestID string, bridge *WSBridge) {
+	if a == nil || bridge == nil || requestID == "" {
+		return
+	}
+	a.wsBufferMu.Lock()
+	frames := a.wsFrameBuffer[requestID]
+	delete(a.wsFrameBuffer, requestID)
+	a.wsBufferMu.Unlock()
+	for _, frame := range frames {
+		bridge.ForwardTunnelToUser(frame)
+	}
+}
 func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 	host := protocol.NormalizeHost(r.Host)
 
@@ -329,6 +353,7 @@ func (a *App) handleTunnelHTTP(w http.ResponseWriter, r *http.Request) {
 
 			bridge := NewWSBridge(requestID, session, userConn)
 			a.wsBridges.Set(requestID, bridge)
+			a.flushBufferedWebSocketFrames(requestID, bridge)
 			defer a.wsBridges.Delete(requestID)
 
 			// Read from user WS and forward to tunnel

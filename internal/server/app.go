@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kaenova/http-tunnels/internal/protocol"
@@ -27,6 +28,8 @@ type App struct {
 	assetHandler  http.Handler
 	sessions      *TunnelSessionStore
 	wsBridges     *WSBridgeStore
+	wsFrameBuffer map[string][]*protocol.Frame
+	wsBufferMu    sync.Mutex
 	server        *http.Server
 	reconcileCtx  context.Context
 	reconcileStop context.CancelFunc
@@ -48,6 +51,7 @@ func NewApp(config Config, assets fs.FS) (*App, error) {
 		assets:        assets,
 		sessions:      NewTunnelSessionStore(),
 		wsBridges:     NewWSBridgeStore(),
+		wsFrameBuffer: make(map[string][]*protocol.Frame),
 		reconcileCtx:  reconcileCtx,
 		reconcileStop: reconcileStop,
 	}
